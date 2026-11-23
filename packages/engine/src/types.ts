@@ -89,6 +89,10 @@ export interface TasteProfile {
   learnedRules: string[];
   /** Enables Loop A batched AI / semantic taste judging. */
   aiJudgeEnabled: boolean;
+  /** Schedule cadence for automatic Loop B reflection. */
+  reflectCadence?: "weekly" | "monthly" | "manual";
+  /** ISO timestamp of the last completed Loop B reflection. */
+  lastReflectedAt?: string;
 }
 
 export interface ScorerWeights {

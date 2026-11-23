@@ -61,6 +61,7 @@ export function createDefaultTasteProfile(): TasteProfile {
     philosophy: DEFAULT_FEED_PHILOSOPHY,
     learnedRules: [],
     aiJudgeEnabled: true,
+    reflectCadence: "weekly",
   };
 }
 

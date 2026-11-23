@@ -1,8 +1,11 @@
 import {
   buildJudgeSystemPrompt,
+  createDefaultProfile,
   distillTasteRulesLocally,
   ensureProfileDefaults,
   evaluateWithLocalRubric,
+  isNegativeFeedbackAction,
+  isPositiveFeedbackAction,
   matchStorySnooze,
   mergeSnoozes,
   pruneExpiredSnoozes,
@@ -743,6 +746,76 @@ async function handleJudgePosts(
   });
 }
 
+async function runReflectionDistillation(
+  env: WorkerEnv,
+  profile: TuningProfile,
+  history: FeedbackEvent[],
+): Promise<{ learnedRules: string[]; source: string }> {
+  const usable = history
+    .filter((e) => isPositiveFeedbackAction(e.action) || isNegativeFeedbackAction(e.action))
+    .slice(0, 60);
+
+  if (env.AI && usable.length > 0) {
+    try {
+      const compact = usable.map((e) => ({
+        action: e.action,
+        tag: e.reasonTag,
+        author: `@${e.authorHandle}`,
+        snippet: e.postSnippet?.slice(0, 160),
+      }));
+      const existingText =
+        profile.tasteProfile.learnedRules.length > 0
+          ? `\nExisting rules (preserve valid ones, refine or prune outdated ones):\n${profile.tasteProfile.learnedRules.map((r) => `- ${r}`).join("\n")}`
+          : "";
+      const aiResp = await env.AI.run(WORKERS_AI_JUDGE_MODEL, {
+        messages: [
+          {
+            role: "system",
+            content:
+              'Distill the user\'s X feed feedback into 3-8 concise, actionable bullet rules capturing what they consider genuine value (insights, counterpoints, casual posts) vs low-value/engagement farming/off-taste posts. Respect false_positive ("Keep") corrections so over-filtering stops. Return ONLY JSON: {"learnedRules":["..."]}.',
+          },
+          {
+            role: "user",
+            content: `Current philosophy: ${profile.tasteProfile.philosophy}${existingText}\nRecent feedback:\n${JSON.stringify(compact)}`,
+          },
+        ],
+        max_tokens: 420,
+        temperature: 0.2,
+      });
+      const text =
+        typeof aiResp.response === "string"
+          ? aiResp.response
+          : JSON.stringify(aiResp);
+      const parsed = extractJsonObject(text);
+      if (Array.isArray(parsed?.learnedRules)) {
+        const cleaned = parsed.learnedRules
+          .map((r) => String(r).trim())
+          .filter((r) => r.length >= 8)
+          .slice(0, 10);
+        if (cleaned.length > 0) {
+          return { learnedRules: cleaned, source: "workers-ai" };
+        }
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          message: "workers-ai reflect fallback triggered",
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+
+  return {
+    learnedRules: distillTasteRulesLocally(
+      usable,
+      profile.tasteProfile.learnedRules,
+    ),
+    source: "local-distiller",
+  };
+}
+
 async function handleReflectTaste(
   request: Request,
   env: WorkerEnv,
@@ -757,65 +830,112 @@ async function handleReflectTaste(
     ? body.feedbackHistory.slice(0, 60)
     : [];
 
-  if (env.AI && history.length > 0) {
-    try {
-      const compact = history.map((e) => ({
-        action: e.action,
-        tag: e.reasonTag,
-        author: `@${e.authorHandle}`,
-        snippet: e.postSnippet?.slice(0, 160),
-      }));
-      const aiResp = await env.AI.run(WORKERS_AI_JUDGE_MODEL, {
-        messages: [
-          {
-            role: "system",
-            content:
-              'Distill the user\'s X feed feedback into 3-8 concise, actionable bullet rules capturing what they consider genuine value (insights, counterpoints, casual posts) vs engagement farming. Return ONLY JSON: {"learnedRules":["..."]}.',
-          },
-          {
-            role: "user",
-            content: `Current philosophy: ${profile.tasteProfile.philosophy}\nRecent feedback:\n${JSON.stringify(compact)}`,
-          },
-        ],
-        max_tokens: 400,
-        temperature: 0.2,
-      });
-      const text =
-        typeof aiResp.response === "string"
-          ? aiResp.response
-          : JSON.stringify(aiResp);
-      const parsed = extractJsonObject(text);
-      if (Array.isArray(parsed?.learnedRules)) {
-        const cleaned = parsed.learnedRules
-          .map((r) => String(r).trim())
-          .filter((r) => r.length >= 8)
-          .slice(0, 10);
-        if (cleaned.length > 0) {
-          return jsonResponse(request, {
-            learnedRules: cleaned,
-            source: "workers-ai",
-          });
-        }
-      }
-    } catch (error) {
-      console.error(
-        JSON.stringify({
-          level: "warn",
-          message: "workers-ai reflect fallback triggered",
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
+  const result = await runReflectionDistillation(env, profile, history);
+  return jsonResponse(request, result);
+}
+
+const MIN_NEW_RATINGS_FOR_SCHEDULED_REFLECT = 10;
+
+async function handleScheduledMaintenance(env: WorkerEnv): Promise<void> {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const sevenDaysAgoIso = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 1. Prune expired 24h story snoozes and old (>7d) judge cache rows
+  try {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM story_snoozes WHERE expires_at <= ?").bind(nowIso),
+      env.DB.prepare("DELETE FROM judge_cache WHERE created_at < ?").bind(sevenDaysAgoIso),
+    ]);
+  } catch (err) {
+    console.error(JSON.stringify({ level: "warn", message: "housekeeping failed", error: String(err) }));
   }
 
-  const learnedRules = distillTasteRulesLocally(
-    history,
-    profile.tasteProfile.learnedRules,
-  );
-  return jsonResponse(request, {
-    learnedRules,
-    source: "local-distiller",
+  // 2. Load current profile & check reflection cadence
+  const profileRow = await env.DB.prepare(
+    "SELECT revision, updated_at, profile_json FROM profile_state WHERE id = ?",
+  )
+    .bind("default")
+    .first<ProfileRow>();
+
+  const profile = profileRow
+    ? ensureProfileDefaults(JSON.parse(profileRow.profile_json) as TuningProfile)
+    : createDefaultProfile(nowIso);
+
+  const cadence = profile.tasteProfile.reflectCadence ?? "weekly";
+  if (cadence === "manual") {
+    console.log(JSON.stringify({ event: "scheduled_reflect_skipped", reason: "manual_cadence" }));
+    return;
+  }
+
+  const lastReflectedMs = profile.tasteProfile.lastReflectedAt
+    ? Date.parse(profile.tasteProfile.lastReflectedAt)
+    : 0;
+  const minIntervalMs =
+    cadence === "monthly" ? 28 * 24 * 60 * 60 * 1000 : 6 * 24 * 60 * 60 * 1000;
+  if (Number.isFinite(lastReflectedMs) && lastReflectedMs > 0 && now - lastReflectedMs < minIntervalMs) {
+    console.log(JSON.stringify({ event: "scheduled_reflect_skipped", reason: "interval_not_elapsed", cadence }));
+    return;
+  }
+
+  // 3. Check if enough new ratings accumulated since last reflection
+  const recentRows = await env.DB.prepare(
+    "SELECT id, post_id, author_handle, action, reason_tag, synced_to_x, source_client, created_at, post_snippet, quoted_snippet, terms_json FROM feedback_events ORDER BY created_at DESC LIMIT 120",
+  ).all<FeedbackRow>();
+  const recentFeedback = recentRows.results.map((r) => rowToFeedback(r, false));
+
+  const newRatings = recentFeedback.filter((ev) => {
+    const isRated = isPositiveFeedbackAction(ev.action) || isNegativeFeedbackAction(ev.action);
+    if (!isRated) return false;
+    if (!lastReflectedMs) return true;
+    return Date.parse(ev.createdAt) > lastReflectedMs;
   });
+
+  if (newRatings.length < MIN_NEW_RATINGS_FOR_SCHEDULED_REFLECT) {
+    console.log(
+      JSON.stringify({
+        event: "scheduled_reflect_skipped",
+        reason: "not_enough_new_ratings",
+        newRatings: newRatings.length,
+        required: MIN_NEW_RATINGS_FOR_SCHEDULED_REFLECT,
+      }),
+    );
+    return;
+  }
+
+  // 4. Run Loop B distillation & persist bumped profile revision so all devices pull it on next sync
+  const reflected = await runReflectionDistillation(env, profile, recentFeedback);
+  const updatedProfile: TuningProfile = {
+    ...profile,
+    revision: profile.revision + 1,
+    updatedAt: nowIso,
+    tasteProfile: {
+      ...profile.tasteProfile,
+      learnedRules: reflected.learnedRules,
+      lastReflectedAt: nowIso,
+    },
+  };
+
+  await env.DB.prepare(
+    `INSERT INTO profile_state (id, revision, updated_at, profile_json)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       revision = excluded.revision,
+       updated_at = excluded.updated_at,
+       profile_json = excluded.profile_json`,
+  )
+    .bind("default", updatedProfile.revision, updatedProfile.updatedAt, JSON.stringify(updatedProfile))
+    .run();
+
+  console.log(
+    JSON.stringify({
+      event: "scheduled_reflect_completed",
+      source: reflected.source,
+      rulesCount: reflected.learnedRules.length,
+      newRatings: newRatings.length,
+      revision: updatedProfile.revision,
+    }),
+  );
 }
 
 export default {
@@ -868,5 +988,12 @@ export default {
       );
       return jsonResponse(request, { error: "Internal server error" }, 500);
     }
+  },
+
+  async scheduled(
+    _controller: { cron: string; scheduledTime: number },
+    env: WorkerEnv,
+  ): Promise<void> {
+    await handleScheduledMaintenance(env);
   },
 };
