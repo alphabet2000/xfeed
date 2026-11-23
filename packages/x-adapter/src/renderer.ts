@@ -379,6 +379,11 @@ export interface RenderCallbacks {
   onExpand: (postId: string) => void;
 }
 
+export interface RenderArticleOptions {
+  threadCount?: number;
+  hideAsThreadCompanion?: boolean;
+}
+
 export function applyDecisionToArticle(
   article: HTMLElement,
   post: PostCandidate,
@@ -386,6 +391,7 @@ export function applyDecisionToArticle(
   profile: TuningProfile,
   callbacks: RenderCallbacks,
   userExpanded: boolean,
+  options?: RenderArticleOptions,
 ): void {
   const cell = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') ?? article;
 
@@ -399,6 +405,14 @@ export function applyDecisionToArticle(
 
   if (!profile.uiOptions.enabled) {
     article.dataset.xfeedExpected = "disabled";
+    return;
+  }
+
+  if (options?.hideAsThreadCompanion && !userExpanded) {
+    cell.classList.add("xfeed-hidden-cell");
+    cell.setAttribute("data-xfeed-state", "hidden");
+    article.style.setProperty("display", "none", "important");
+    article.dataset.xfeedExpected = "thread-hidden";
     return;
   }
 
@@ -434,13 +448,17 @@ export function applyDecisionToArticle(
         ? uniqueMessages.join(" · ")
         : `Score ${decision.score.toFixed(1)}`;
     const scoreTag = `${decision.score > 0 ? "+" : ""}${decision.score.toFixed(1)}`;
+    const threadPrefix =
+      options?.threadCount && options.threadCount > 1
+        ? `Filtered thread (${options.threadCount} posts) · `
+        : "Filtered ";
 
     const body = document.createElement("div");
     body.className = "xfeed-stub-body";
 
     const label = document.createElement("span");
     label.className = "xfeed-stub-reason";
-    label.textContent = `Filtered @${post.authorHandle} (${scoreTag}) · ${reasonText}`;
+    label.textContent = `${threadPrefix}@${post.authorHandle} (${scoreTag}) · ${reasonText}`;
     body.append(label);
 
     const previewSource = (post.text || post.quotedText || "").replace(/\s+/g, " ").trim();
@@ -466,7 +484,9 @@ export function applyDecisionToArticle(
       e.preventDefault();
       e.stopPropagation();
       callbacks.onExpand(post.id);
-      applyDecisionToArticle(article, post, decision, profile, callbacks, true);
+      if (!options?.threadCount || options.threadCount <= 1) {
+        applyDecisionToArticle(article, post, decision, profile, callbacks, true);
+      }
     });
 
     actions.append(showBtn);

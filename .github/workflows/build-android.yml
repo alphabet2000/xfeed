@@ -21,7 +21,7 @@ jobs:
       - name: Build JS bundles and run unit tests
         run: |
           node scripts/build.mjs
-          node --test packages/engine/test/*.test.ts apps/sync-worker/test/*.test.mjs
+          node --test packages/engine/test/*.test.ts packages/x-adapter/test/*.test.ts apps/sync-worker/test/*.test.mjs
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4

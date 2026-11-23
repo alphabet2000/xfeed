@@ -24,6 +24,13 @@ import {
   renderFloatingPill,
 } from "./renderer.ts";
 import {
+  detectDomThreadConnectors,
+  getCellVisualY,
+  isThreadFooterCell,
+  partitionThreadGroups,
+  resolveThreadGroup,
+} from "./threadGroup.ts";
+import {
   installNativeFeedbackObserver,
   triggerNativeNotInterested,
 } from "./xFeedback.ts";
@@ -41,6 +48,7 @@ export class XFeedController {
   private verdictCache = new Map<string, JudgeVerdict>();
   private judgedPostIds = new Set<string>();
   private userExpandedPostIds = new Set<string>();
+  private threadPeersByPostId = new Map<string, Set<string>>();
   private lastTasteKey: string = "";
   private evaluatedPostActions = new Map<string, "show" | "boost" | "collapse" | "hide">();
   private seenStories = new Map<string, SeenStoryRecord>();
@@ -290,8 +298,14 @@ export class XFeedController {
       action === "less_author" ||
       action === "mute_author"
     ) {
-      // If the user previously clicked "Show" on this post, un-expand it so the new filter takes effect immediately
+      // If the user previously clicked "Show" on this post (or its thread), un-expand all posts in the thread
       this.userExpandedPostIds.delete(post.id);
+      const peers = this.threadPeersByPostId.get(post.id);
+      if (peers) {
+        for (const peerId of peers) {
+          this.userExpandedPostIds.delete(peerId);
+        }
+      }
     }
 
     const result = this.engine.applyFeedback(this.profile, this.feedbackHistory, {
@@ -329,101 +343,308 @@ export class XFeedController {
     const rev = this.profile.revision;
     const revKey = String(rev);
     const focalStatusId = getFocalStatusId();
-    const articles = document.querySelectorAll<HTMLElement>(
-      'article[data-testid="tweet"]',
+    const articles = Array.from(
+      document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]'),
     );
 
-    for (const article of articles) {
+    // Assign stable IDs to parent containers so we only group cells inside the same timeline list
+    const containerIds = new WeakMap<HTMLElement, string>();
+    let containerSeq = 0;
+    const getContainerKey = (cell: HTMLElement): string => {
+      const parent = cell.parentElement;
+      if (!parent) return "root";
+      let id = containerIds.get(parent);
+      if (!id) {
+        id = `c${++containerSeq}`;
+        containerIds.set(parent, id);
+      }
+      return id;
+    };
+
+    interface ExtractedNode {
+      article: HTMLElement;
+      cell: HTMLElement;
+      post: PostCandidate;
+      postId: string;
+      authorHandle: string;
+      containerKey: string;
+      visualOrder: number;
+      domIndex: number;
+      connectsUp: boolean;
+      connectsDown: boolean;
+      replyingToHandles: string[];
+      gapFromPrevPx: number | null;
+      rectTop: number;
+      rectBottom: number;
+    }
+
+    const rawNodes: ExtractedNode[] = [];
+    for (let idx = 0; idx < articles.length; idx++) {
+      const article = articles[idx];
       const post = extractPostCandidate(article);
       if (!post) continue;
-
-      const verdict = this.verdictCache.get(post.id);
-      const isFocalPost = Boolean(focalStatusId && post.id === focalStatusId);
-      const isExpanded = isFocalPost || this.userExpandedPostIds.has(post.id);
-      const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${isExpanded ? "e" : "n"}`;
       const cell = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') ?? article;
-      const expected = article.dataset.xfeedExpected;
-      const domIntact =
-        article.dataset.xfeedRev === renderStamp &&
-        ((expected === "disabled" && !this.profile.uiOptions.enabled) ||
-          (expected === "hide" && cell.dataset.xfeedState === "hidden") ||
-          (expected === "collapse" &&
-            article.dataset.xfeedState === "collapsed" &&
-            Boolean(cell.querySelector(".xfeed-collapse-stub"))) ||
-          (expected === "show" &&
-            cell.dataset.xfeedState !== "hidden" &&
-            article.dataset.xfeedState !== "collapsed" &&
-            Boolean(cell.querySelector(".xfeed-action-bar"))));
-      if (!force && domIntact) continue;
-
-      const ownSeen = this.seenStories.get(post.id);
-      const earlierSeen =
-        focalStatusId || post.sourceFeed === "post_detail"
-          ? []
-          : Array.from(this.seenStories.values()).filter(
-              (s) => s.postId !== post.id && (!ownSeen || s.seenAt < ownSeen.seenAt),
-            );
-
-      const decision = this.engine.evaluate(
+      const conn = focalStatusId
+        ? { connectsUp: false, connectsDown: false, replyingToHandles: [] }
+        : detectDomThreadConnectors(article, post);
+      const rect = cell.getBoundingClientRect();
+      rawNodes.push({
+        article,
+        cell,
         post,
-        this.profile,
-        this.feedbackHistory,
-        Date.now(),
-        verdict,
-        earlierSeen,
-      );
-      this.evaluatedPostActions.set(post.id, isFocalPost ? "show" : decision.action);
-      article.dataset.xfeedRev = renderStamp;
-      article.dataset.xfeedPostId = post.id;
+        postId: post.id,
+        authorHandle: post.authorHandle,
+        containerKey: getContainerKey(cell),
+        visualOrder: getCellVisualY(cell),
+        domIndex: idx,
+        connectsUp: conn.connectsUp,
+        connectsDown: conn.connectsDown,
+        replyingToHandles: conn.replyingToHandles,
+        gapFromPrevPx: null,
+        rectTop: rect.top,
+        rectBottom: rect.bottom,
+      });
+    }
 
-      // Remember visible posts in the rolling 24h buffer so later duplicate headlines auto-collapse
+    // Sort visually and populate pixel gaps between consecutive tweet cells in the same container
+    rawNodes.sort((a, b) => {
+      if (a.containerKey !== b.containerKey) return a.containerKey < b.containerKey ? -1 : 1;
+      if (a.visualOrder !== b.visualOrder) return a.visualOrder - b.visualOrder;
+      return a.domIndex - b.domIndex;
+    });
+    for (let i = 1; i < rawNodes.length; i++) {
+      const prev = rawNodes[i - 1];
+      const curr = rawNodes[i];
       if (
-        !focalStatusId &&
-        !ownSeen &&
-        !post.isPromoted &&
-        (decision.action === "show" || decision.action === "boost")
+        prev.containerKey === curr.containerKey &&
+        prev.rectBottom > 0 &&
+        curr.rectTop > 0
       ) {
-        const terms = extractTerms(`${post.text} ${post.quotedText ?? ""}`, post.hashtags);
-        if (terms.length >= 2) {
-          this.seenStories.set(post.id, {
-            postId: post.id,
-            authorHandle: post.authorHandle,
-            terms,
-            seenAt: Date.now() + this.seenStories.size,
+        curr.gapFromPrevPx = curr.rectTop - prev.rectBottom;
+      }
+    }
+
+    const groups = focalStatusId
+      ? rawNodes.map((n) => [n])
+      : partitionThreadGroups(rawNodes, this.threadPeersByPostId);
+
+    // Record discovered multi-post thread peer links in memory so hiding/collapsing never breaks grouping
+    for (const group of groups) {
+      if (group.length < 2) continue;
+      const ids = group.map((n) => n.postId);
+      for (const id of ids) {
+        let set = this.threadPeersByPostId.get(id);
+        if (!set) {
+          set = new Set<string>();
+          this.threadPeersByPostId.set(id, set);
+        }
+        for (const other of ids) {
+          if (other !== id) set.add(other);
+        }
+      }
+    }
+
+    // Track filtered thread spans per container so middle "..." connectors and "Show this thread" footers also hide
+    const filteredThreadSpans: Array<{
+      container: HTMLElement;
+      minY: number;
+      maxY: number;
+      nextTweetY: number | null;
+    }> = [];
+
+    for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+      const group = groups[gIdx];
+      const evaluated = group.map((node) => {
+        const verdict = this.verdictCache.get(node.postId);
+        const isFocalPost = Boolean(focalStatusId && node.postId === focalStatusId);
+        const ownSeen = this.seenStories.get(node.postId);
+        const earlierSeen =
+          focalStatusId || node.post.sourceFeed === "post_detail"
+            ? []
+            : Array.from(this.seenStories.values()).filter(
+                (s) => s.postId !== node.postId && (!ownSeen || s.seenAt < ownSeen.seenAt),
+              );
+        const decision = this.engine.evaluate(
+          node.post,
+          this.profile,
+          this.feedbackHistory,
+          Date.now(),
+          verdict,
+          earlierSeen,
+        );
+        return {
+          item: node,
+          postId: node.postId,
+          verdict,
+          ownSeen,
+          decision,
+          isFocalPost,
+          isUserExpanded: this.userExpandedPostIds.has(node.postId),
+        };
+      });
+
+      const groupRes = resolveThreadGroup(evaluated);
+      const groupPostIds = group.map((n) => n.postId);
+      const groupStamp =
+        group.length > 1
+          ? `g:${groupPostIds.join(",")}:${groupRes.isFiltered ? `f(${groupRes.primaryFiltered?.postId})` : groupRes.isExpanded ? "e" : "o"}`
+          : "g1";
+
+      if (group.length > 1 && groupRes.isFiltered && this.profile.uiOptions.enabled) {
+        const parentEl = group[0].cell.parentElement;
+        if (parentEl) {
+          const nextGroup = groups[gIdx + 1];
+          const nextTweetY =
+            nextGroup && nextGroup[0].cell.parentElement === parentEl
+              ? nextGroup[0].visualOrder
+              : null;
+          filteredThreadSpans.push({
+            container: parentEl,
+            minY: group[0].visualOrder,
+            maxY: group[group.length - 1].visualOrder,
+            nextTweetY,
           });
-          this.persistSeenStories();
         }
       }
 
-      applyDecisionToArticle(
-        article,
-        post,
-        decision,
-        this.profile,
-        {
-          onFeedback: (p, act, art, tag) => {
-            void this.handleFeedback(p, act, art, false, tag);
-          },
-          onExpand: (expandedId) => {
-            this.userExpandedPostIds.add(expandedId);
-          },
-        },
-        isExpanded,
-      );
+      for (const member of evaluated) {
+        const { item, decision, verdict, ownSeen, isFocalPost } = member;
+        const { article, cell, post } = item;
+        const isCompanionHidden = Boolean(
+          group.length > 1 &&
+            groupRes.isFiltered &&
+            groupRes.primaryFiltered &&
+            groupRes.primaryFiltered.postId !== post.id,
+        );
+        const effectiveExpanded = groupRes.isExpanded;
+        const effectiveAction = isFocalPost
+          ? "show"
+          : isCompanionHidden
+            ? "hide"
+            : decision.action;
+        this.evaluatedPostActions.set(post.id, effectiveAction);
 
-      // Queue for Loop A AI Judge only if enabled, not yet judged, and not already filtered by Stage 1
-      if (
-        this.profile.uiOptions.enabled &&
-        this.profile.tasteProfile.aiJudgeEnabled &&
-        this.bridge.judgePosts &&
-        !post.isPromoted &&
-        decision.action !== "hide" &&
-        decision.action !== "collapse" &&
-        !verdict &&
-        !this.judgedPostIds.has(post.id)
-      ) {
-        this.judgedPostIds.add(post.id);
-        this.pendingJudgePosts.set(post.id, post);
+        const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${effectiveExpanded ? "e" : "n"}:${groupStamp}`;
+        const expected = article.dataset.xfeedExpected;
+        const domIntact =
+          article.dataset.xfeedRev === renderStamp &&
+          ((expected === "disabled" && !this.profile.uiOptions.enabled) ||
+            ((expected === "hide" || expected === "thread-hidden") &&
+              cell.dataset.xfeedState === "hidden") ||
+            (expected === "collapse" &&
+              article.dataset.xfeedState === "collapsed" &&
+              Boolean(cell.querySelector(".xfeed-collapse-stub"))) ||
+            (expected === "show" &&
+              cell.dataset.xfeedState !== "hidden" &&
+              article.dataset.xfeedState !== "collapsed" &&
+              Boolean(cell.querySelector(".xfeed-action-bar"))));
+
+        // Remember visible posts in the rolling 24h buffer so later duplicate headlines auto-collapse
+        if (
+          !focalStatusId &&
+          !ownSeen &&
+          !post.isPromoted &&
+          !groupRes.isFiltered &&
+          (decision.action === "show" || decision.action === "boost")
+        ) {
+          const terms = extractTerms(`${post.text} ${post.quotedText ?? ""}`, post.hashtags);
+          if (terms.length >= 2) {
+            this.seenStories.set(post.id, {
+              postId: post.id,
+              authorHandle: post.authorHandle,
+              terms,
+              seenAt: Date.now() + this.seenStories.size,
+            });
+            this.persistSeenStories();
+          }
+        }
+
+        if (force || !domIntact) {
+          article.dataset.xfeedRev = renderStamp;
+          article.dataset.xfeedPostId = post.id;
+
+          applyDecisionToArticle(
+            article,
+            post,
+            decision,
+            this.profile,
+            {
+              onFeedback: (p, act, art, tag) => {
+                void this.handleFeedback(p, act, art, false, tag);
+              },
+              onExpand: (expandedId) => {
+                if (groupPostIds.length > 1) {
+                  for (const gid of groupPostIds) {
+                    this.userExpandedPostIds.add(gid);
+                  }
+                  this.reprocessAll(true);
+                } else {
+                  this.userExpandedPostIds.add(expandedId);
+                }
+              },
+            },
+            effectiveExpanded,
+            {
+              threadCount: group.length > 1 ? group.length : undefined,
+              hideAsThreadCompanion: isCompanionHidden,
+            },
+          );
+        }
+
+        // Queue for Loop A AI Judge only if enabled, not yet judged, and not already filtered
+        if (
+          this.profile.uiOptions.enabled &&
+          this.profile.tasteProfile.aiJudgeEnabled &&
+          this.bridge.judgePosts &&
+          !post.isPromoted &&
+          !groupRes.isFiltered &&
+          decision.action !== "hide" &&
+          decision.action !== "collapse" &&
+          !verdict &&
+          !this.judgedPostIds.has(post.id)
+        ) {
+          this.judgedPostIds.add(post.id);
+          this.pendingJudgePosts.set(post.id, post);
+        }
+      }
+    }
+
+    // Hide dangling non-tweet thread connectors ("...") and "Show this thread" footers for filtered threads
+    const auxCells = document.querySelectorAll<HTMLElement>(
+      '[data-testid="cellInnerDiv"][data-xfeed-thread-aux="1"]',
+    );
+    for (const aux of auxCells) {
+      aux.classList.remove("xfeed-hidden-cell");
+      aux.removeAttribute("data-xfeed-state");
+      aux.removeAttribute("data-xfeed-thread-aux");
+    }
+    if (filteredThreadSpans.length > 0 && this.profile.uiOptions.enabled) {
+      const seenContainers = new Set(filteredThreadSpans.map((s) => s.container));
+      for (const container of seenContainers) {
+        const spans = filteredThreadSpans.filter((s) => s.container === container);
+        const cells = Array.from(
+          container.querySelectorAll<HTMLElement>(':scope > [data-testid="cellInnerDiv"]'),
+        );
+        for (const cell of cells) {
+          if (cell.querySelector('article[data-testid="tweet"]')) continue;
+          const y = getCellVisualY(cell);
+          const inFilteredSpan = spans.some((span) => {
+            if (y > span.minY && y < span.maxY) return true;
+            if (
+              isThreadFooterCell(cell) &&
+              y > span.maxY &&
+              (span.nextTweetY === null ? y - span.maxY <= 400 : y < span.nextTweetY)
+            ) {
+              return true;
+            }
+            return false;
+          });
+          if (inFilteredSpan) {
+            cell.classList.add("xfeed-hidden-cell");
+            cell.setAttribute("data-xfeed-state", "hidden");
+            cell.setAttribute("data-xfeed-thread-aux", "1");
+          }
+        }
       }
     }
 

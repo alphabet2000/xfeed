@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test packages/engine/test/*.test.ts apps/sync-worker/test/*.test.mjs",
+    "test": "node --test packages/engine/test/*.test.ts packages/x-adapter/test/*.test.ts apps/sync-worker/test/*.test.mjs",
     "dev:sync": "node apps/sync-worker/dev-server.mjs",
     "dev:playground": "node apps/playground/server.mjs",
     "deploy:cf": "node scripts/deploy-cloudflare.mjs"
