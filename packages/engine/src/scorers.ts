@@ -289,13 +289,17 @@ export class FeedbackMemoryScorer implements PostScorer {
           event.action === "mute_author" ||
           event.action === "seen_story"
         ) {
+          const snoozeTopic =
+            event.terms && event.terms.length > 0
+              ? `: ${event.terms.slice(0, 3).join(", ")}`
+              : "";
           const msg =
             event.action === "less_author"
               ? `Less from @${event.authorHandle}`
               : event.action === "mute_author"
                 ? `Muted @${event.authorHandle}`
                 : event.action === "seen_story"
-                  ? "Snoozed 24h"
+                  ? `Snoozed 24h${snoozeTopic}`
                   : "Downvoted by you";
           return {
             delta: -10,

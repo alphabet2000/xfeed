@@ -11,16 +11,22 @@ import type {
 const HOUR_MS = 60 * 60 * 1000;
 const SEEN_WINDOW_MS = 24 * HOUR_MS;
 
-function termOverlapStats(a: string[], b: string[]): { shared: number; jaccard: number } {
-  if (a.length === 0 || b.length === 0) return { shared: 0, jaccard: 0 };
+function termOverlapStats(
+  a: string[],
+  b: string[],
+): { shared: number; jaccard: number; matchedTerms: string[] } {
+  if (a.length === 0 || b.length === 0) {
+    return { shared: 0, jaccard: 0, matchedTerms: [] };
+  }
   const setA = new Set(a);
   const setB = new Set(b);
-  let shared = 0;
+  const matchedTerms: string[] = [];
   for (const t of setA) {
-    if (setB.has(t)) shared += 1;
+    if (setB.has(t)) matchedTerms.push(t);
   }
+  const shared = matchedTerms.length;
   const union = setA.size + setB.size - shared;
-  return { shared, jaccard: union === 0 ? 0 : shared / union };
+  return { shared, jaccard: union === 0 ? 0 : shared / union, matchedTerms };
 }
 
 export function createStorySnooze(
@@ -122,15 +128,19 @@ export function computeRepetitionPenalty(
   let similarCount = 0;
   let maxShared = 0;
   let maxJaccard = 0;
+  const termHits = new Map<string, number>();
 
   for (const seen of seenStories) {
     if (seen.postId === post.id) continue;
     if (now - seen.seenAt > SEEN_WINDOW_MS) continue;
-    const { shared, jaccard } = termOverlapStats(postTerms, seen.terms);
+    const { shared, jaccard, matchedTerms } = termOverlapStats(postTerms, seen.terms);
     if (shared >= 3 || (shared >= 2 && jaccard >= 0.30)) {
       similarCount += 1;
       if (shared > maxShared) maxShared = shared;
       if (jaccard > maxJaccard) maxJaccard = jaccard;
+      for (const term of matchedTerms) {
+        termHits.set(term, (termHits.get(term) ?? 0) + 1);
+      }
     }
   }
 
@@ -142,22 +152,34 @@ export function computeRepetitionPenalty(
     return null;
   }
 
+  const topTopics = Array.from(termHits.entries())
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      const aHash = a[0].startsWith("#") ? 1 : 0;
+      const bHash = b[0].startsWith("#") ? 1 : 0;
+      if (bHash !== aHash) return bHash - aHash;
+      return b[0].length - a[0].length;
+    })
+    .slice(0, 4)
+    .map(([term]) => term);
+  const topicSuffix = topTopics.length > 0 ? `: ${topTopics.join(", ")}` : "";
+
   if (maxShared >= 4 || maxJaccard >= 0.48) {
     return {
       delta: -3.5,
-      message: "Already saw this story today",
+      message: `Already saw this story today${topicSuffix}`,
     };
   }
   if (similarCount >= 3) {
     return {
       delta: -3.0,
-      message: `Repeated topic (${similarCount}× today)`,
+      message: `Repeated topic (${similarCount}× today)${topicSuffix}`,
     };
   }
   if (similarCount === 2) {
     return {
       delta: -1.8,
-      message: "Repeated topic today",
+      message: `Repeated topic today${topicSuffix}`,
     };
   }
 

@@ -111,7 +111,7 @@ export function injectStyles(): void {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
       padding: 8px 14px;
       margin: 4px 10px;
       border-radius: 10px;
@@ -120,7 +120,25 @@ export function injectStyles(): void {
       color: #8b98a5;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 12px;
-      line-height: 1.3;
+      line-height: 1.35;
+    }
+    .xfeed-stub-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .xfeed-stub-reason {
+      color: #c5ced6;
+      font-weight: 500;
+    }
+    .xfeed-stub-preview {
+      color: #71767b;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .xfeed-stub-actions {
       display: inline-flex;
@@ -399,10 +417,43 @@ export function applyDecisionToArticle(
     article.dataset.xfeedExpected = "collapse";
     const stub = document.createElement("div");
     stub.className = "xfeed-collapse-stub";
+    const negativeReasons = [...decision.reasons]
+      .filter((r) => r.delta < 0)
+      .sort((a, b) => a.delta - b.delta);
+    const chosenReasons = (
+      negativeReasons.length > 0 ? negativeReasons : decision.reasons
+    ).slice(0, 2);
+    const uniqueMessages: string[] = [];
+    for (const r of chosenReasons) {
+      if (r.message && !uniqueMessages.includes(r.message)) {
+        uniqueMessages.push(r.message);
+      }
+    }
     const reasonText =
-      decision.reasons[0]?.message ?? `Score ${decision.score.toFixed(1)}`;
+      uniqueMessages.length > 0
+        ? uniqueMessages.join(" · ")
+        : `Score ${decision.score.toFixed(1)}`;
+    const scoreTag = `${decision.score > 0 ? "+" : ""}${decision.score.toFixed(1)}`;
+
+    const body = document.createElement("div");
+    body.className = "xfeed-stub-body";
+
     const label = document.createElement("span");
-    label.textContent = `Filtered @${post.authorHandle} · ${reasonText}`;
+    label.className = "xfeed-stub-reason";
+    label.textContent = `Filtered @${post.authorHandle} (${scoreTag}) · ${reasonText}`;
+    body.append(label);
+
+    const previewSource = (post.text || post.quotedText || "").replace(/\s+/g, " ").trim();
+    if (previewSource) {
+      const preview = document.createElement("span");
+      preview.className = "xfeed-stub-preview";
+      preview.textContent =
+        previewSource.length > 110
+          ? `"${previewSource.slice(0, 107)}…"`
+          : `"${previewSource}"`;
+      preview.title = previewSource;
+      body.append(preview);
+    }
 
     const actions = document.createElement("span");
     actions.className = "xfeed-stub-actions";
@@ -419,7 +470,7 @@ export function applyDecisionToArticle(
     });
 
     actions.append(showBtn);
-    stub.append(label, actions);
+    stub.append(body, actions);
     article.parentElement?.insertBefore(stub, article);
     return;
   }
@@ -492,11 +543,17 @@ export function applyDecisionToArticle(
     const cls = decision.score > 0 ? "pos" : decision.score < 0 ? "neg" : "";
     badge.className = `xfeed-score-pill ${cls}`.trim();
     const sign = decision.score > 0 ? "+" : "";
-    const topReason = decision.reasons[0]?.message;
+    const sortedReasons = [...decision.reasons].sort(
+      (a, b) => Math.abs(b.delta) - Math.abs(a.delta),
+    );
+    const topReason = sortedReasons[0]?.message;
     badge.textContent = topReason
       ? `${sign}${decision.score.toFixed(1)} · ${topReason}`
       : `${sign}${decision.score.toFixed(1)}`;
-    badge.title = badge.textContent;
+    badge.title =
+      sortedReasons.length > 0
+        ? `${sign}${decision.score.toFixed(1)} · ${sortedReasons.map((r) => `${r.message} (${r.delta > 0 ? "+" : ""}${r.delta.toFixed(1)})`).join(" | ")}`
+        : badge.textContent;
     bar.append(badge);
   }
 

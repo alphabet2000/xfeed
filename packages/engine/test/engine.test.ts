@@ -338,6 +338,9 @@ test("Seen 24h snoozes repeated breaking stories temporarily without poisoning l
   ];
   const autoDedupe = engine.evaluate(nvda2, createDefaultProfile(), [], now + 60_000, undefined, seenBuffer);
   assert.equal(autoDedupe.action, "collapse");
+  const dedupeReason = autoDedupe.reasons.find((r) => r.scorerId === "story-novelty")?.message ?? "";
+  assert.match(dedupeReason, /nvidia/i);
+  assert.match(dedupeReason, /jensen|huang|#nvda/i);
 
   const counterpoint = engine.evaluate(
     nvda2,
