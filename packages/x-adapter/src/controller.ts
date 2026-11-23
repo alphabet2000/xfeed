@@ -37,7 +37,9 @@ export class XFeedController {
   private judgeTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingJudgePosts = new Map<string, PostCandidate>();
   private verdictCache = new Map<string, JudgeVerdict>();
-  private judgedRevKeys = new Set<string>();
+  private judgedPostIds = new Set<string>();
+  private userExpandedPostIds = new Set<string>();
+  private lastTasteKey: string = "";
   private evaluatedPostActions = new Map<string, "show" | "boost" | "collapse" | "hide">();
   private seenStories = new Map<string, SeenStoryRecord>();
   private lastPathname: string = "";
@@ -93,19 +95,26 @@ export class XFeedController {
     }
   }
 
+  private computeTasteKey(profile: TuningProfile): string {
+    return `${profile.tasteProfile.aiJudgeEnabled}|${profile.tasteProfile.philosophy}|${profile.tasteProfile.learnedRules.join("\n")}`;
+  }
+
   async start(): Promise<void> {
     injectStyles();
     this.loadSeenStories();
     const state = await this.bridge.loadState();
     this.profile = ensureProfileDefaults(state.profile);
+    this.lastTasteKey = this.computeTasteKey(this.profile);
     this.feedbackHistory = state.feedbackHistory;
 
     this.bridge.onStateUpdated?.((nextState) => {
-      const prevRev = this.profile.revision;
       this.profile = ensureProfileDefaults(nextState.profile);
       this.feedbackHistory = nextState.feedbackHistory;
-      if (this.profile.revision !== prevRev) {
-        this.judgedRevKeys.clear();
+      const nextTasteKey = this.computeTasteKey(this.profile);
+      if (nextTasteKey !== this.lastTasteKey) {
+        this.lastTasteKey = nextTasteKey;
+        this.verdictCache.clear();
+        this.judgedPostIds.clear();
       }
       this.reprocessAll(true);
     });
@@ -164,7 +173,6 @@ export class XFeedController {
       this.pendingJudgePosts.delete(p.id);
     }
 
-    const revAtRequest = this.profile.revision;
     try {
       const verdicts = await this.bridge.judgePosts(
         batch,
@@ -173,7 +181,7 @@ export class XFeedController {
       );
       if (verdicts.length === 0) return;
       for (const verdict of verdicts) {
-        this.verdictCache.set(`${verdict.postId}:${revAtRequest}`, verdict);
+        this.verdictCache.set(verdict.postId, verdict);
       }
       this.reprocessAll(true);
     } catch {
@@ -246,6 +254,18 @@ export class XFeedController {
       syncedToX = await triggerNativeNotInterested(article);
     }
 
+    if (
+      action === "downvote" ||
+      action === "farming" ||
+      action === "not_interested" ||
+      action === "seen_story" ||
+      action === "less_author" ||
+      action === "mute_author"
+    ) {
+      // If the user previously clicked "Show" on this post, un-expand it so the new filter takes effect immediately
+      this.userExpandedPostIds.delete(post.id);
+    }
+
     const result = this.engine.applyFeedback(this.profile, this.feedbackHistory, {
       post,
       action,
@@ -255,7 +275,6 @@ export class XFeedController {
     });
     this.profile = result.profile;
     this.feedbackHistory = result.feedbackHistory;
-    this.judgedRevKeys.clear();
 
     await this.bridge.recordFeedback(
       result.event,
@@ -287,10 +306,10 @@ export class XFeedController {
       const post = extractPostCandidate(article);
       if (!post) continue;
 
-      const cacheKey = `${post.id}:${rev}`;
-      const verdict = this.verdictCache.get(cacheKey);
+      const verdict = this.verdictCache.get(post.id);
       const isFocalPost = Boolean(focalStatusId && post.id === focalStatusId);
-      const renderStamp = `${revKey}:${verdict ? "j" : "s"}:${isFocalPost ? "f" : "n"}`;
+      const isExpanded = isFocalPost || this.userExpandedPostIds.has(post.id);
+      const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${isExpanded ? "e" : "n"}`;
       if (!force && article.dataset.xfeedRev === renderStamp) continue;
 
       const ownSeen = this.seenStories.get(post.id);
@@ -341,21 +360,25 @@ export class XFeedController {
           onFeedback: (p, act, art, tag) => {
             void this.handleFeedback(p, act, art, false, tag);
           },
+          onExpand: (expandedId) => {
+            this.userExpandedPostIds.add(expandedId);
+          },
         },
-        // Never hide or collapse the focal post when the user clicked into its detail page!
-        isFocalPost || article.dataset.xfeedExpanded === "1",
+        isExpanded,
       );
 
-      // Queue for Loop A AI Judge if enabled, not yet judged at this revision, and not a promoted ad
+      // Queue for Loop A AI Judge only if enabled, not yet judged, and not already filtered by Stage 1
       if (
         this.profile.uiOptions.enabled &&
         this.profile.tasteProfile.aiJudgeEnabled &&
         this.bridge.judgePosts &&
         !post.isPromoted &&
+        decision.action !== "hide" &&
+        decision.action !== "collapse" &&
         !verdict &&
-        !this.judgedRevKeys.has(cacheKey)
+        !this.judgedPostIds.has(post.id)
       ) {
-        this.judgedRevKeys.add(cacheKey);
+        this.judgedPostIds.add(post.id);
         this.pendingJudgePosts.set(post.id, post);
       }
     }

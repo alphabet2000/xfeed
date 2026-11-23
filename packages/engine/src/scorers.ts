@@ -270,7 +270,20 @@ export class FeedbackMemoryScorer implements PostScorer {
             ],
           };
         }
-        if (isNegativeFeedbackAction(event.action)) {
+        if (
+          isNegativeFeedbackAction(event.action) ||
+          event.action === "less_author" ||
+          event.action === "mute_author" ||
+          event.action === "seen_story"
+        ) {
+          const msg =
+            event.action === "less_author"
+              ? `Less from @${event.authorHandle}`
+              : event.action === "mute_author"
+                ? `Muted @${event.authorHandle}`
+                : event.action === "seen_story"
+                  ? "Snoozed 24h"
+                  : "Downvoted by you";
           return {
             delta: -10,
             hardAction: "hide",
@@ -278,7 +291,7 @@ export class FeedbackMemoryScorer implements PostScorer {
               {
                 scorerId: this.id,
                 delta: -10,
-                message: "Downvoted by you",
+                message: msg,
               },
             ],
           };

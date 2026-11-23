@@ -65,7 +65,15 @@ export function injectStyles(): void {
     }
 
     .xfeed-hidden-cell {
+      border: none !important;
+    }
+    .xfeed-hidden-cell > * {
       display: none !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      overflow: hidden !important;
     }
     .xfeed-hidden-x-feedback {
       border: none !important;
@@ -333,6 +341,7 @@ export interface RenderCallbacks {
     article: HTMLElement,
     reasonTag?: string,
   ) => void;
+  onExpand: (postId: string) => void;
 }
 
 export function applyDecisionToArticle(
@@ -378,7 +387,7 @@ export function applyDecisionToArticle(
     showBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      article.dataset.xfeedExpanded = "1";
+      callbacks.onExpand(post.id);
       applyDecisionToArticle(article, post, decision, profile, callbacks, true);
     });
 

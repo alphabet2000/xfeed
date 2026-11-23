@@ -358,3 +358,42 @@ test("Seen 24h snoozes repeated breaking stories temporarily without poisoning l
   );
   assert.equal(counterpoint.action, "boost");
 });
+
+test("Less @author collapses both the clicked post and subsequent posts from that author even with positive AI verdict", () => {
+  const engine = new CustomizationEngine();
+  let profile = createDefaultProfile();
+  let history = [] as ReturnType<CustomizationEngine["applyFeedback"]>["feedbackHistory"];
+
+  const post1 = makePost({ id: "la-1", authorHandle: "noisy_person", text: "Just another casual thought" });
+  const post2 = makePost({ id: "la-2", authorHandle: "noisy_person", text: "Second casual post from same author" });
+
+  const applied = engine.applyFeedback(profile, history, {
+    post: post1,
+    action: "less_author",
+    sourceClient: "extension",
+  });
+  profile = applied.profile;
+  history = applied.feedbackHistory;
+
+  const mildAiVerdict = {
+    postId: post2.id,
+    worthwhile: 4.5,
+    farming: 1.5,
+    category: "casual" as const,
+    reason: "Authentic casual post",
+    similarExampleIds: [],
+    source: "workers-ai" as const,
+    evaluatedAt: new Date().toISOString(),
+  };
+
+  // Clicked post collapses immediately even with positive verdict
+  assert.equal(
+    engine.evaluate(post1, profile, history, Date.now(), { ...mildAiVerdict, postId: post1.id }).action,
+    "collapse",
+  );
+  // Subsequent casual post from same author also collapses (-3.5 author + 1.65 casual = -1.85 <= -1.5)
+  assert.equal(
+    engine.evaluate(post2, profile, history, Date.now(), mildAiVerdict).action,
+    "collapse",
+  );
+});
