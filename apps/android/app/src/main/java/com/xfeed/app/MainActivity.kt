@@ -1,10 +1,14 @@
 package com.xfeed.app
 
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Message
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -16,6 +20,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -51,17 +56,56 @@ class MainActivity : ComponentActivity() {
             .also { injectedScriptCache = it }
     }
 
-    private fun isXOrigin(host: String?): Boolean {
-        if (host.isNullOrBlank()) return false
+    private fun isInAppOrigin(host: String?): Boolean {
+        if (host.isNullOrBlank()) return true
         val h = host.lowercase()
         return h == "x.com" || h.endsWith(".x.com") ||
             h == "twitter.com" || h.endsWith(".twitter.com") ||
-            h == "accounts.google.com" || h == "appleid.apple.com"
+            h == "twimg.com" || h.endsWith(".twimg.com") ||
+            h == "accounts.google.com" || h.endsWith(".accounts.google.com") ||
+            h == "accounts.youtube.com" || h == "myaccount.google.com" ||
+            h == "gds.google.com" || h == "consent.google.com" ||
+            h == "appleid.apple.com" || h == "idmsa.apple.com" ||
+            h.endsWith(".arkoselabs.com") || h.endsWith(".funcaptcha.com") ||
+            h == "challenges.cloudflare.com"
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebViewSettings(webView: WebView) {
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+        settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.setSupportMultipleWindows(true)
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // Present as standard Android Chrome mobile (strip "; wv" and "Version/4.0" WebView markers)
+        settings.userAgentString = settings.userAgentString
+            .replace("; wv", "")
+            .replace(Regex("""Version/\d+\.\d+\s*"""), "")
+
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        CookieManager.getInstance().flush()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
         localStore = LocalStore(applicationContext)
 
         setContent {
@@ -150,24 +194,67 @@ class MainActivity : ComponentActivity() {
             }
 
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                Surface(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { ctx ->
                                 WebView(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
                                     setBackgroundColor(Color.parseColor("#0F1419"))
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.databaseEnabled = true
-                                    settings.mediaPlaybackRequiresUserGesture = false
-                                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                                    settings.userAgentString = settings.userAgentString.replace("; wv", "")
-                                    webChromeClient = WebChromeClient()
+                                    configureWebViewSettings(this)
 
-                                    val cookieManager = CookieManager.getInstance()
-                                    cookieManager.setAcceptCookie(true)
-                                    cookieManager.setAcceptThirdPartyCookies(this, true)
+                                    webChromeClient = object : WebChromeClient() {
+                                        override fun onCreateWindow(
+                                            view: WebView?,
+                                            isDialog: Boolean,
+                                            isUserGesture: Boolean,
+                                            resultMsg: Message?
+                                        ): Boolean {
+                                            val popupWebView = WebView(ctx).apply {
+                                                layoutParams = ViewGroup.LayoutParams(
+                                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                                )
+                                                setBackgroundColor(Color.parseColor("#0F1419"))
+                                                configureWebViewSettings(this)
+                                            }
+                                            val dialog = Dialog(
+                                                ctx,
+                                                android.R.style.Theme_Black_NoTitleBar_Fullscreen
+                                            ).apply {
+                                                setContentView(popupWebView)
+                                                setOnDismissListener {
+                                                    popupWebView.destroy()
+                                                    CookieManager.getInstance().flush()
+                                                }
+                                            }
+                                            popupWebView.webChromeClient = object : WebChromeClient() {
+                                                override fun onCloseWindow(window: WebView?) {
+                                                    if (dialog.isShowing) dialog.dismiss()
+                                                }
+                                            }
+                                            popupWebView.webViewClient = object : WebViewClient() {
+                                                override fun shouldOverrideUrlLoading(
+                                                    pView: WebView?,
+                                                    req: WebResourceRequest?
+                                                ): Boolean = false
+
+                                                override fun onPageFinished(pView: WebView?, url: String?) {
+                                                    super.onPageFinished(pView, url)
+                                                    CookieManager.getInstance().flush()
+                                                }
+                                            }
+                                            dialog.show()
+                                            val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                            transport?.webView = popupWebView
+                                            resultMsg?.sendToTarget()
+                                            return true
+                                        }
+                                    }
 
                                     val jsBridge = XFeedJsBridge(
                                         getStateJsonProvider = {
@@ -225,11 +312,18 @@ class MainActivity : ComponentActivity() {
                                             view: WebView?,
                                             request: WebResourceRequest?
                                         ): Boolean {
-                                            val uri = request?.url ?: return false
-                                            if (isXOrigin(uri.host)) {
+                                            val req = request ?: return false
+                                            // Never hijack iframes (login verification, OAuth, embedded widgets)
+                                            if (!req.isForMainFrame) return false
+                                            val uri = req.url ?: return false
+                                            val scheme = uri.scheme?.lowercase()
+                                            if (scheme != "http" && scheme != "https") {
                                                 return false
                                             }
-                                            // Open external articles/links in the system browser
+                                            if (isInAppOrigin(uri.host) || !req.hasGesture()) {
+                                                return false
+                                            }
+                                            // Open user-tapped external articles/links in the system browser
                                             try {
                                                 startActivity(Intent(Intent.ACTION_VIEW, uri))
                                             } catch (_: Exception) {
@@ -240,8 +334,9 @@ class MainActivity : ComponentActivity() {
 
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             super.onPageFinished(view, url)
-                                            val host = url?.let { Uri.parse(it).host }
-                                            if (host != null && (host.endsWith("x.com") || host.endsWith("twitter.com"))) {
+                                            CookieManager.getInstance().flush()
+                                            val host = url?.let { Uri.parse(it).host }?.lowercase()
+                                            if (host != null && (host == "x.com" || host.endsWith(".x.com") || host == "twitter.com" || host.endsWith(".twitter.com"))) {
                                                 val script = loadBundledAdapterScript()
                                                 view?.evaluateJavascript(script, null)
                                             }

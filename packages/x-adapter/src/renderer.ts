@@ -346,6 +346,18 @@ export function applyLayoutOptions(profile: TuningProfile): void {
   }
 }
 
+export function clearLayoutOptions(): void {
+  if (!document.body) return;
+  document.body.classList.remove("xfeed-hide-sidebar", "xfeed-wide-timeline");
+}
+
+export function hideFloatingPill(): void {
+  const pill = document.getElementById(PILL_ID);
+  if (pill) {
+    pill.style.display = "none";
+  }
+}
+
 export function renderFloatingPill(
   stats: FeedStats,
   enabled: boolean,
@@ -363,6 +375,7 @@ export function renderFloatingPill(
     });
     document.body?.appendChild(pill);
   }
+  pill.style.display = "flex";
   const filtered = stats.hidden + stats.collapsed;
   pill.textContent = enabled
     ? `xfeed · ${filtered} filtered`

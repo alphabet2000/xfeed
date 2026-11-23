@@ -6,6 +6,20 @@ export function getFocalStatusId(loc: Location = window.location): string | null
   return match?.[1] ?? null;
 }
 
+export function isAuthRoute(loc: Location = window.location): boolean {
+  const pathname = loc.pathname.toLowerCase();
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname.startsWith("/i/flow/login") ||
+    pathname.startsWith("/i/flow/signup") ||
+    pathname.startsWith("/i/flow/password_reset") ||
+    pathname.startsWith("/i/oauth2") ||
+    pathname.startsWith("/account/access") ||
+    pathname === "/logout"
+  );
+}
+
 export function detectSourceFeed(loc: Location = window.location): SourceFeed {
   const pathname = loc.pathname.toLowerCase();
   if (pathname === "/home" || pathname === "/") {

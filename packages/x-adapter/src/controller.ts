@@ -15,10 +15,12 @@ import type {
   TuningProfile,
 } from "../../engine/src/types.ts";
 import type { AdapterState, FeedStats, HostBridge } from "./bridge.ts";
-import { extractPostCandidate, getFocalStatusId } from "./extractor.ts";
+import { extractPostCandidate, getFocalStatusId, isAuthRoute } from "./extractor.ts";
 import {
   applyDecisionToArticle,
   applyLayoutOptions,
+  clearLayoutOptions,
+  hideFloatingPill,
   hideNativeDismissedBanners,
   injectStyles,
   renderFloatingPill,
@@ -329,14 +331,20 @@ export class XFeedController {
   }
 
   reprocessAll(force: boolean): void {
-    injectStyles();
-    applyLayoutOptions(this.profile);
-    hideNativeDismissedBanners(this.profile.uiOptions.enabled);
     const currentPath = window.location.pathname;
     if (currentPath !== this.lastPathname) {
       this.lastPathname = currentPath;
       force = true;
     }
+    // Never touch DOM, layout, or overlay pills on X sign-in / auth flows
+    if (isAuthRoute()) {
+      clearLayoutOptions();
+      hideFloatingPill();
+      return;
+    }
+    injectStyles();
+    applyLayoutOptions(this.profile);
+    hideNativeDismissedBanners(this.profile.uiOptions.enabled);
     if (force) {
       this.evaluatedPostActions.clear();
     }
