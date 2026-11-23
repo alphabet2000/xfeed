@@ -39,6 +39,8 @@ import com.xfeed.app.data.PersistedAppState
 import com.xfeed.app.data.SyncRepository
 import com.xfeed.app.ui.TuningSheet
 import com.xfeed.app.webview.XFeedJsBridge
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -47,6 +49,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var localStore: LocalStore
     private val syncRepository = SyncRepository()
     private var injectedScriptCache: String? = null
+    private var activeWebView: WebView? = null
+    private var flushPendingSyncAction: (() -> Unit)? = null
 
     private fun loadBundledAdapterScript(): String {
         injectedScriptCache?.let { return it }
@@ -84,7 +88,8 @@ class MainActivity : ComponentActivity() {
         settings.displayZoomControls = false
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
-        settings.mediaPlaybackRequiresUserGesture = false
+        // Tap-to-play videos saves substantial WebView video decoder & battery overhead
+        settings.mediaPlaybackRequiresUserGesture = true
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         // Present as standard Android Chrome mobile (strip "; wv" and "Version/4.0" WebView markers)
         settings.userAgentString = settings.userAgentString
@@ -96,9 +101,25 @@ class MainActivity : ComponentActivity() {
         cookieManager.setAcceptThirdPartyCookies(webView, true)
     }
 
+    override fun onResume() {
+        super.onResume()
+        activeWebView?.onResume()
+        activeWebView?.resumeTimers()
+    }
+
     override fun onPause() {
-        super.onPause()
+        flushPendingSyncAction?.invoke()
+        activeWebView?.onPause()
+        activeWebView?.pauseTimers()
         CookieManager.getInstance().flush()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        flushPendingSyncAction = null
+        activeWebView?.destroy()
+        activeWebView = null
+        super.onDestroy()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -133,8 +154,11 @@ class MainActivity : ComponentActivity() {
 
             var syncInFlight by remember { mutableStateOf(false) }
             var syncQueued by remember { mutableStateOf(false) }
+            var debouncedSyncJob by remember { mutableStateOf<Job?>(null) }
 
             fun triggerSync(stateOverride: PersistedAppState? = null) {
+                debouncedSyncJob?.cancel()
+                debouncedSyncJob = null
                 val initialState = stateOverride ?: appState
                 if (!initialState.syncConfig.enabled) return
                 if (syncInFlight) {
@@ -169,9 +193,17 @@ class MainActivity : ComponentActivity() {
                                     pendingFeedback = remainingPending,
                                     syncConfig = latest.syncConfig
                                 )
+                                val webStateChanged =
+                                    finalState.profile.revision != latest.profile.revision ||
+                                    finalState.feedbackHistory.size != latest.feedbackHistory.size ||
+                                    finalState.profile.storySnoozes.length() != latest.profile.storySnoozes.length() ||
+                                    finalState.profile.learnedModel.optInt("trainedOnCount", 0) !=
+                                        latest.profile.learnedModel.optInt("trainedOnCount", 0)
                                 localStore.save(finalState)
                                 appState = finalState
-                                pushStateToWebView(finalState)
+                                if (webStateChanged) {
+                                    pushStateToWebView(finalState)
+                                }
                                 if (remainingPending.isNotEmpty() || latest.profile.revision > pendingPassState.profile.revision) {
                                     pendingPassState = finalState
                                     syncQueued = true
@@ -183,6 +215,23 @@ class MainActivity : ComponentActivity() {
                     } finally {
                         syncInFlight = false
                     }
+                }
+            }
+
+            fun scheduleDebouncedSync(nextState: PersistedAppState) {
+                if (!nextState.syncConfig.enabled) return
+                debouncedSyncJob?.cancel()
+                debouncedSyncJob = scope.launch {
+                    delay(4_000)
+                    triggerSync(appState)
+                }
+            }
+
+            flushPendingSyncAction = {
+                if (debouncedSyncJob?.isActive == true) {
+                    debouncedSyncJob?.cancel()
+                    debouncedSyncJob = null
+                    triggerSync(appState)
                 }
             }
 
@@ -266,7 +315,7 @@ class MainActivity : ComponentActivity() {
                                             localStore.save(next)
                                             runOnUiThread {
                                                 appState = next
-                                                triggerSync(next)
+                                                scheduleDebouncedSync(next)
                                             }
                                         },
                                         onFeedbackRecorded = { event, updatedProfile, updatedHistory ->
@@ -278,7 +327,7 @@ class MainActivity : ComponentActivity() {
                                             localStore.save(next)
                                             runOnUiThread {
                                                 appState = next
-                                                triggerSync(next)
+                                                scheduleDebouncedSync(next)
                                             }
                                         },
                                         onJudgeBatchRequested = { reqId, postsJson, profileJson, historyJson ->
@@ -303,7 +352,9 @@ class MainActivity : ComponentActivity() {
                                             runOnUiThread { showTuningSheet = true }
                                         },
                                         onStatsReported = { reported ->
-                                            runOnUiThread { stats = reported }
+                                            runOnUiThread {
+                                                if (stats != reported) stats = reported
+                                            }
                                         }
                                     )
                                     addJavascriptInterface(jsBridge, "XFeedAndroid")
@@ -346,6 +397,7 @@ class MainActivity : ComponentActivity() {
 
                                     loadUrl("https://x.com/home")
                                     webViewRef = this
+                                    activeWebView = this
                                 }
                             }
                         )

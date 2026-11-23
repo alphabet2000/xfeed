@@ -46,16 +46,21 @@ export class XFeedController {
   private cleanupNativeObserver: (() => void) | null = null;
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
   private judgeTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingJudgePosts = new Map<string, PostCandidate>();
+  private persistSeenTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingJudgePosts = new Map<string, { post: PostCandidate; article: HTMLElement }>();
   private verdictCache = new Map<string, JudgeVerdict>();
+  private decisionCache = new Map<string, ReturnType<CustomizationEngine["evaluate"]>>();
   private judgedPostIds = new Set<string>();
   private userExpandedPostIds = new Set<string>();
   private threadPeersByPostId = new Map<string, Set<string>>();
   private lastTasteKey: string = "";
+  private lastHudKey: string = "";
+  private isApplyingDom: boolean = false;
   private evaluatedPostActions = new Map<string, "show" | "boost" | "collapse" | "hide">();
   private seenStories = new Map<string, SeenStoryRecord>();
   private lastPathname: string = "";
   private cleanupPopstate: (() => void) | null = null;
+  private cleanupLifecycle: (() => void) | null = null;
 
   constructor(
     bridge: HostBridge,
@@ -92,7 +97,19 @@ export class XFeedController {
     }
   }
 
+  private schedulePersistSeenStories(): void {
+    if (this.persistSeenTimer !== null) return;
+    this.persistSeenTimer = setTimeout(() => {
+      this.persistSeenTimer = null;
+      this.persistSeenStories();
+    }, 5000);
+  }
+
   private persistSeenStories(): void {
+    if (this.persistSeenTimer !== null) {
+      clearTimeout(this.persistSeenTimer);
+      this.persistSeenTimer = null;
+    }
     try {
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       const fresh = Array.from(this.seenStories.values())
@@ -162,8 +179,42 @@ export class XFeedController {
       void this.handleFeedback(post, "downvote", null, true, "native_x");
     });
 
-    this.observer = new MutationObserver(() => {
-      this.scheduleScan();
+    this.observer = new MutationObserver((records) => {
+      if (this.isApplyingDom || document.hidden) return;
+      if (window.location.pathname !== this.lastPathname) {
+        this.scheduleScan();
+        return;
+      }
+      // Ignore pure text ticks (video timers, live engagement counters) and our own injected UI
+      for (const rec of records) {
+        for (const node of rec.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          const el = node as HTMLElement;
+          if (
+            el.id === "xfeed-floating-pill" ||
+            el.classList?.contains("xfeed-action-bar") ||
+            el.classList?.contains("xfeed-collapse-stub") ||
+            el.closest?.('[data-testid="app-text-transition-container"]')
+          ) {
+            continue;
+          }
+          this.scheduleScan();
+          return;
+        }
+        for (const node of rec.removedNodes) {
+          if (node.nodeType !== 1) continue;
+          const el = node as HTMLElement;
+          if (
+            el.classList?.contains("xfeed-action-bar") ||
+            el.classList?.contains("xfeed-collapse-stub") ||
+            el.closest?.('[data-testid="app-text-transition-container"]')
+          ) {
+            continue;
+          }
+          this.scheduleScan();
+          return;
+        }
+      }
     });
     if (document.body) {
       this.observer.observe(document.body, { childList: true, subtree: true });
@@ -175,6 +226,31 @@ export class XFeedController {
     window.addEventListener("popstate", onRouteChange);
     this.cleanupPopstate = () => window.removeEventListener("popstate", onRouteChange);
 
+    const onVisibilityOrHide = () => {
+      if (document.hidden) {
+        if (this.scanTimer !== null) {
+          clearTimeout(this.scanTimer);
+          this.scanTimer = null;
+        }
+        if (this.judgeTimer !== null) {
+          clearTimeout(this.judgeTimer);
+          this.judgeTimer = null;
+        }
+        this.persistSeenStories();
+      } else {
+        this.scheduleScan();
+      }
+    };
+    const onPageHide = () => {
+      this.persistSeenStories();
+    };
+    document.addEventListener("visibilitychange", onVisibilityOrHide);
+    window.addEventListener("pagehide", onPageHide);
+    this.cleanupLifecycle = () => {
+      document.removeEventListener("visibilitychange", onVisibilityOrHide);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+
     this.reprocessAll(true);
   }
 
@@ -185,31 +261,53 @@ export class XFeedController {
     this.cleanupNativeObserver = null;
     this.cleanupPopstate?.();
     this.cleanupPopstate = null;
+    this.cleanupLifecycle?.();
+    this.cleanupLifecycle = null;
+    if (this.scanTimer !== null) {
+      clearTimeout(this.scanTimer);
+      this.scanTimer = null;
+    }
+    if (this.judgeTimer !== null) {
+      clearTimeout(this.judgeTimer);
+      this.judgeTimer = null;
+    }
+    this.persistSeenStories();
   }
 
   private scheduleScan(): void {
-    if (this.scanTimer !== null) return;
+    if (document.hidden || this.scanTimer !== null) return;
     this.scanTimer = setTimeout(() => {
       this.scanTimer = null;
-      this.reprocessAll(false);
-    }, 60);
+      if (!document.hidden) {
+        this.reprocessAll(false);
+      }
+    }, 220);
   }
 
   private scheduleJudgeFlush(): void {
-    if (!this.bridge.judgePosts || !this.profile.tasteProfile.aiJudgeEnabled) return;
+    if (document.hidden || !this.bridge.judgePosts || !this.profile.tasteProfile.aiJudgeEnabled) return;
     if (this.judgeTimer !== null) return;
     this.judgeTimer = setTimeout(() => {
       this.judgeTimer = null;
       void this.flushJudgeQueue();
-    }, 240);
+    }, 750);
   }
 
   private async flushJudgeQueue(): Promise<void> {
-    if (!this.bridge.judgePosts || this.pendingJudgePosts.size === 0) return;
-    const batch = Array.from(this.pendingJudgePosts.values()).slice(0, 12);
-    for (const p of batch) {
-      this.pendingJudgePosts.delete(p.id);
+    if (document.hidden || !this.bridge.judgePosts || this.pendingJudgePosts.size === 0) return;
+
+    // Only judge posts still attached to the live DOM (skip posts the user already flick-scrolled past)
+    const batch: PostCandidate[] = [];
+    for (const [id, entry] of this.pendingJudgePosts.entries()) {
+      this.pendingJudgePosts.delete(id);
+      if (!entry.article.isConnected) {
+        this.judgedPostIds.delete(id);
+        continue;
+      }
+      batch.push(entry.post);
+      if (batch.length >= 12) break;
     }
+    if (batch.length === 0) return;
 
     try {
       const verdicts = await this.bridge.judgePosts(
@@ -226,7 +324,7 @@ export class XFeedController {
       // Non-fatal: Stage 1 sync decisions remain active
     }
 
-    if (this.pendingJudgePosts.size > 0) {
+    if (this.pendingJudgePosts.size > 0 && !document.hidden) {
       this.scheduleJudgeFlush();
     }
   }
@@ -250,7 +348,11 @@ export class XFeedController {
 
   private updateHud(): void {
     const stats = this.computeStats();
-    renderFloatingPill(stats, this.profile.uiOptions.enabled, () => {
+    const enabled = this.profile.uiOptions.enabled;
+    const hudKey = `${enabled ? 1 : 0}:${stats.seen}:${stats.hidden}:${stats.collapsed}:${stats.boosted}`;
+    if (hudKey === this.lastHudKey) return;
+    this.lastHudKey = hudKey;
+    renderFloatingPill(stats, enabled, () => {
       if (this.bridge.openTuningPanel) {
         this.bridge.openTuningPanel();
       } else {
@@ -331,6 +433,17 @@ export class XFeedController {
   }
 
   reprocessAll(force: boolean): void {
+    if (document.hidden && !force) return;
+    this.isApplyingDom = true;
+    try {
+      this.reprocessAllInner(force);
+    } finally {
+      this.observer?.takeRecords();
+      this.isApplyingDom = false;
+    }
+  }
+
+  private reprocessAllInner(force: boolean): void {
     const currentPath = window.location.pathname;
     if (currentPath !== this.lastPathname) {
       this.lastPathname = currentPath;
@@ -347,6 +460,7 @@ export class XFeedController {
     hideNativeDismissedBanners(this.profile.uiOptions.enabled);
     if (force) {
       this.evaluatedPostActions.clear();
+      this.decisionCache.clear();
     }
     const rev = this.profile.revision;
     const revKey = String(rev);
@@ -382,8 +496,6 @@ export class XFeedController {
       connectsDown: boolean;
       replyingToHandles: string[];
       gapFromPrevPx: number | null;
-      rectTop: number;
-      rectBottom: number;
     }
 
     const rawNodes: ExtractedNode[] = [];
@@ -395,7 +507,6 @@ export class XFeedController {
       const conn = focalStatusId
         ? { connectsUp: false, connectsDown: false, replyingToHandles: [] }
         : detectDomThreadConnectors(article, post);
-      const rect = cell.getBoundingClientRect();
       rawNodes.push({
         article,
         cell,
@@ -409,12 +520,10 @@ export class XFeedController {
         connectsDown: conn.connectsDown,
         replyingToHandles: conn.replyingToHandles,
         gapFromPrevPx: null,
-        rectTop: rect.top,
-        rectBottom: rect.bottom,
       });
     }
 
-    // Sort visually and populate pixel gaps between consecutive tweet cells in the same container
+    // Sort visually and only measure pixel gaps when a tweet needs the reply-header fallback
     rawNodes.sort((a, b) => {
       if (a.containerKey !== b.containerKey) return a.containerKey < b.containerKey ? -1 : 1;
       if (a.visualOrder !== b.visualOrder) return a.visualOrder - b.visualOrder;
@@ -425,10 +534,15 @@ export class XFeedController {
       const curr = rawNodes[i];
       if (
         prev.containerKey === curr.containerKey &&
-        prev.rectBottom > 0 &&
-        curr.rectTop > 0
+        !prev.connectsDown &&
+        !curr.connectsUp &&
+        curr.replyingToHandles.length > 0
       ) {
-        curr.gapFromPrevPx = curr.rectTop - prev.rectBottom;
+        const prevRect = prev.cell.getBoundingClientRect();
+        const currRect = curr.cell.getBoundingClientRect();
+        if (prevRect.bottom > 0 && currRect.top > 0) {
+          curr.gapFromPrevPx = currRect.top - prevRect.bottom;
+        }
       }
     }
 
@@ -466,20 +580,28 @@ export class XFeedController {
         const verdict = this.verdictCache.get(node.postId);
         const isFocalPost = Boolean(focalStatusId && node.postId === focalStatusId);
         const ownSeen = this.seenStories.get(node.postId);
-        const earlierSeen =
-          focalStatusId || node.post.sourceFeed === "post_detail"
-            ? []
-            : Array.from(this.seenStories.values()).filter(
-                (s) => s.postId !== node.postId && (!ownSeen || s.seenAt < ownSeen.seenAt),
-              );
-        const decision = this.engine.evaluate(
-          node.post,
-          this.profile,
-          this.feedbackHistory,
-          Date.now(),
-          verdict,
-          earlierSeen,
-        );
+        const evalKey = `${revKey}:${node.postId}:${verdict ? "j" : "s"}`;
+        let decision = this.decisionCache.get(evalKey);
+        if (!decision) {
+          const earlierSeen =
+            focalStatusId || node.post.sourceFeed === "post_detail"
+              ? []
+              : Array.from(this.seenStories.values()).filter(
+                  (s) => s.postId !== node.postId && (!ownSeen || s.seenAt < ownSeen.seenAt),
+                );
+          decision = this.engine.evaluate(
+            node.post,
+            this.profile,
+            this.feedbackHistory,
+            Date.now(),
+            verdict,
+            earlierSeen,
+          );
+          if (this.decisionCache.size > 400) {
+            this.decisionCache.clear();
+          }
+          this.decisionCache.set(evalKey, decision);
+        }
         return {
           item: node,
           postId: node.postId,
@@ -563,7 +685,7 @@ export class XFeedController {
               terms,
               seenAt: Date.now() + this.seenStories.size,
             });
-            this.persistSeenStories();
+            this.schedulePersistSeenStories();
           }
         }
 
@@ -612,7 +734,7 @@ export class XFeedController {
           !this.judgedPostIds.has(post.id)
         ) {
           this.judgedPostIds.add(post.id);
-          this.pendingJudgePosts.set(post.id, post);
+          this.pendingJudgePosts.set(post.id, { post, article });
         }
       }
     }

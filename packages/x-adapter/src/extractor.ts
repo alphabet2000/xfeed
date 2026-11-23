@@ -26,7 +26,7 @@ export function detectSourceFeed(loc: Location = window.location): SourceFeed {
     const selectedTab = document.querySelector<HTMLElement>(
       '[role="tablist"] [role="tab"][aria-selected="true"]',
     );
-    const label = (selectedTab?.innerText ?? "").trim().toLowerCase();
+    const label = (selectedTab?.textContent ?? "").trim().toLowerCase();
     if (label.includes("following")) return "following";
     return "for_you";
   }
@@ -60,7 +60,7 @@ function extractAuthor(article: HTMLElement): { handle: string; name: string } {
     let name = "";
     for (const link of links) {
       const href = link.getAttribute("href") ?? "";
-      const text = (link.innerText ?? "").trim();
+      const text = (link.textContent ?? "").trim();
       if (!handle && /^\/[A-Za-z0-9_]+$/.test(href)) {
         handle = normalizeHandle(href.slice(1));
       }
@@ -94,8 +94,29 @@ function detectPromoted(article: HTMLElement): boolean {
   return false;
 }
 
+const candidateCache = new WeakMap<
+  HTMLElement,
+  { id: string; textLen: number; pathname: string; post: PostCandidate }
+>();
+
 export function extractPostCandidate(article: HTMLElement): PostCandidate | null {
   const id = extractStatusId(article);
+  const firstTextEl = article.querySelector<HTMLElement>('[data-testid="tweetText"]');
+  const firstTextLen = firstTextEl?.textContent?.length ?? 0;
+  const pathname = window.location.pathname;
+
+  if (id) {
+    const cached = candidateCache.get(article);
+    if (
+      cached &&
+      cached.id === id &&
+      cached.textLen === firstTextLen &&
+      cached.pathname === pathname
+    ) {
+      return cached.post;
+    }
+  }
+
   const isPromoted = detectPromoted(article);
 
   // Promoted cards sometimes omit a /status/<id> link; synthesize a stable key from text + author.
@@ -103,8 +124,8 @@ export function extractPostCandidate(article: HTMLElement): PostCandidate | null
   const textNodes = Array.from(
     article.querySelectorAll<HTMLElement>('[data-testid="tweetText"]'),
   );
-  const mainText = (textNodes[0]?.innerText ?? "").trim();
-  const quotedText = textNodes.length > 1 ? (textNodes[1]?.innerText ?? "").trim() : undefined;
+  const mainText = (textNodes[0]?.textContent ?? "").trim();
+  const quotedText = textNodes.length > 1 ? (textNodes[1]?.textContent ?? "").trim() : undefined;
 
   const finalId =
     id ??
@@ -114,7 +135,7 @@ export function extractPostCandidate(article: HTMLElement): PostCandidate | null
   if (!finalId) return null;
 
   const socialContext = (
-    article.querySelector<HTMLElement>('[data-testid="socialContext"]')?.innerText ?? ""
+    article.querySelector<HTMLElement>('[data-testid="socialContext"]')?.textContent ?? ""
   ).trim();
   const isRepost = /reposted|retweeted/i.test(socialContext);
   const repostedBy = isRepost
@@ -123,7 +144,7 @@ export function extractPostCandidate(article: HTMLElement): PostCandidate | null
 
   const hashtags: string[] = [];
   article.querySelectorAll<HTMLAnchorElement>('a[href^="/hashtag/"]').forEach((a) => {
-    const tag = (a.innerText ?? "").replace(/^#/, "").trim();
+    const tag = (a.textContent ?? "").replace(/^#/, "").trim();
     if (tag) hashtags.push(tag);
   });
 
@@ -142,7 +163,7 @@ export function extractPostCandidate(article: HTMLElement): PostCandidate | null
   const timestamp =
     article.querySelector<HTMLTimeElement>("time")?.getAttribute("datetime") ?? undefined;
 
-  return {
+  const post: PostCandidate = {
     id: finalId,
     authorHandle: author.handle,
     authorName: author.name,
@@ -159,4 +180,11 @@ export function extractPostCandidate(article: HTMLElement): PostCandidate | null
     sourceFeed: detectSourceFeed(),
     timestamp,
   };
+  candidateCache.set(article, {
+    id: finalId,
+    textLen: firstTextLen,
+    pathname,
+    post,
+  });
+  return post;
 }

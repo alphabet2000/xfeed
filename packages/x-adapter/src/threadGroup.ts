@@ -169,14 +169,9 @@ export function detectDomThreadConnectors(
   article: HTMLElement,
   post: PostCandidate,
 ): { connectsUp: boolean; connectsDown: boolean; replyingToHandles: string[] } {
-  const cell = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') ?? article;
-  const isCurrentlyHidden =
-    article.dataset.xfeedState === "collapsed" ||
-    cell.dataset.xfeedState === "hidden" ||
-    article.style.display === "none";
-
-  // Reuse cached connector flags when the article is already hidden for this same postId
-  if (isCurrentlyHidden && article.dataset.xfeedConnPostId === post.id) {
+  // Reuse cached connector metadata whenever this article still represents the same postId
+  // (avoids repeated getComputedStyle / getBoundingClientRect forced reflows on every scroll mutation)
+  if (article.dataset.xfeedConnPostId === post.id) {
     const cachedReply = article.dataset.xfeedReplyingTo ?? "";
     return {
       connectsUp: article.dataset.xfeedConnUp === "1",
@@ -271,7 +266,7 @@ const THREAD_FOOTER_PHRASES = [
 
 export function isThreadFooterCell(cell: HTMLElement): boolean {
   if (cell.querySelector('article[data-testid="tweet"]')) return false;
-  const text = (cell.innerText ?? cell.textContent ?? "").trim().toLowerCase();
+  const text = (cell.textContent ?? "").trim().toLowerCase();
   return (
     text.length > 0 &&
     text.length <= 80 &&

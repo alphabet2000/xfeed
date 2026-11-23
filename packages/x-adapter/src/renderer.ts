@@ -277,15 +277,14 @@ export function injectStyles(): void {
       gap: 6px;
       padding: 7px 12px;
       border-radius: 999px;
-      background: rgba(15, 20, 25, 0.9);
+      background: rgba(15, 20, 25, 0.94);
       color: #e7e9ea;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
-      backdrop-filter: blur(8px);
     }
   `;
   (document.head ?? document.documentElement).appendChild(style);
@@ -305,28 +304,37 @@ const NATIVE_FEEDBACK_PHRASES = [
   "post hidden",
 ];
 
+const checkedLayoutEls = new WeakSet<HTMLElement>();
+
 export function hideNativeDismissedBanners(enabled: boolean): void {
   const cells = document.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]');
   for (const cell of cells) {
     // Only inspect non-tweet cells (X replaces the dismissed tweet with feedback/follow-up rows)
     if (cell.querySelector('article[data-testid="tweet"]')) {
-      cell.classList.remove("xfeed-hidden-x-feedback");
-      cell.removeAttribute("data-xfeed-native-hidden");
+      if (cell.dataset.xfeedNativeHidden === "1") {
+        cell.classList.remove("xfeed-hidden-x-feedback");
+        cell.removeAttribute("data-xfeed-native-hidden");
+      }
       continue;
     }
     if (!enabled) {
-      cell.classList.remove("xfeed-hidden-x-feedback");
-      cell.removeAttribute("data-xfeed-native-hidden");
+      if (cell.dataset.xfeedNativeHidden === "1") {
+        cell.classList.remove("xfeed-hidden-x-feedback");
+        cell.removeAttribute("data-xfeed-native-hidden");
+      }
       continue;
     }
-    const text = (cell.innerText ?? cell.textContent ?? "").trim().toLowerCase();
+    const raw = cell.textContent ?? "";
+    const text = raw.trim().toLowerCase();
     if (
       text.length > 0 &&
       text.length <= 280 &&
       NATIVE_FEEDBACK_PHRASES.some((phrase) => text.includes(phrase))
     ) {
-      cell.classList.add("xfeed-hidden-x-feedback");
-      cell.setAttribute("data-xfeed-native-hidden", "1");
+      if (cell.dataset.xfeedNativeHidden !== "1") {
+        cell.classList.add("xfeed-hidden-x-feedback");
+        cell.setAttribute("data-xfeed-native-hidden", "1");
+      }
     }
   }
 }
@@ -340,7 +348,8 @@ export function applyLayoutOptions(profile: TuningProfile): void {
   document.body.classList.toggle("xfeed-hide-sidebar", hideSidebar);
   document.body.classList.toggle("xfeed-wide-timeline", wide);
 
-  if (!wide) return;
+  // Skip expensive desktop column unclamping on mobile viewports (< 700px) where @media doesn't apply
+  if (!wide || window.innerWidth < 700) return;
 
   // Clear X's obfuscated 600px max-width wrappers around & inside primaryColumn
   const primary = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
@@ -349,12 +358,15 @@ export function applyLayoutOptions(profile: TuningProfile): void {
   // Walk up to <main> in case an intermediate flex wrapper has a fixed width/max-width
   let parent = primary.parentElement;
   while (parent && parent.tagName !== "MAIN" && parent !== document.body) {
-    const cs = window.getComputedStyle(parent);
-    const mw = parseFloat(cs.maxWidth);
-    const w = parseFloat(cs.width);
-    if ((Number.isFinite(mw) && mw >= 550 && mw <= 650) || (Number.isFinite(w) && w >= 550 && w <= 650)) {
-      parent.style.setProperty("max-width", "100%", "important");
-      parent.style.setProperty("width", "100%", "important");
+    if (!checkedLayoutEls.has(parent)) {
+      checkedLayoutEls.add(parent);
+      const cs = window.getComputedStyle(parent);
+      const mw = parseFloat(cs.maxWidth);
+      const w = parseFloat(cs.width);
+      if ((Number.isFinite(mw) && mw >= 550 && mw <= 650) || (Number.isFinite(w) && w >= 550 && w <= 650)) {
+        parent.style.setProperty("max-width", "100%", "important");
+        parent.style.setProperty("width", "100%", "important");
+      }
     }
     parent = parent.parentElement;
   }
@@ -363,10 +375,11 @@ export function applyLayoutOptions(profile: TuningProfile): void {
   const descendants = primary.querySelectorAll<HTMLElement>("div");
   let checked = 0;
   for (const el of descendants) {
+    if (checkedLayoutEls.has(el) || el.classList.contains("xfeed-widened")) continue;
     if (el.closest('article[data-testid="tweet"]')) continue;
-    if (el.classList.contains("xfeed-widened")) continue;
+    checkedLayoutEls.add(el);
     checked += 1;
-    if (checked > 80) break;
+    if (checked > 40) break;
     const mw = parseFloat(window.getComputedStyle(el).maxWidth);
     if (Number.isFinite(mw) && mw >= 550 && mw <= 650) {
       el.classList.add("xfeed-widened");
