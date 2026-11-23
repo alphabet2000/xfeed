@@ -187,8 +187,36 @@ export function injectStyles(): void {
       padding: 4px 16px 10px 68px !important;
     }
     @media (max-width: 600px) {
+      .xfeed-action-bar {
+        flex-wrap: nowrap !important;
+        gap: 10px !important;
+        padding: 6px 0 4px 0 !important;
+      }
       .xfeed-action-bar.xfeed-action-bar-cell {
         padding: 4px 12px 10px 14px !important;
+      }
+      .xfeed-btn {
+        padding: 4px 10px !important;
+        font-size: 14px !important;
+        line-height: 1.25 !important;
+      }
+      .xfeed-btn .xfeed-btn-lbl {
+        display: none !important;
+      }
+      .xfeed-btn-keep-bar {
+        font-size: 12px !important;
+        padding: 4px 9px !important;
+      }
+      .xfeed-btn-keep-bar .xfeed-btn-lbl-short {
+        display: inline !important;
+      }
+      .xfeed-btn-keep-bar .xfeed-btn-lbl-long {
+        display: none !important;
+      }
+      .xfeed-score-pill {
+        max-width: 96px !important;
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
       }
     }
     .xfeed-action-bar:hover {
@@ -514,17 +542,37 @@ export function applyDecisionToArticle(
   bar.className = "xfeed-action-bar";
 
   const makeBtn = (
-    text: string,
+    icon: string,
+    label: string,
     title: string,
     action: FeedbackAction,
     extraClass: string = "",
     reasonTag?: string,
+    longSuffix?: string,
   ) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `xfeed-btn ${extraClass}`.trim();
-    btn.textContent = text;
+    btn.setAttribute("aria-label", longSuffix ? `${label} ${longSuffix}` : label);
     btn.title = title;
+
+    const icoSpan = document.createElement("span");
+    icoSpan.className = "xfeed-btn-ico";
+    icoSpan.textContent = icon;
+    btn.append(icoSpan);
+
+    const lblSpan = document.createElement("span");
+    lblSpan.className = longSuffix ? "xfeed-btn-lbl xfeed-btn-lbl-short" : "xfeed-btn-lbl";
+    lblSpan.textContent = ` ${label}`;
+    btn.append(lblSpan);
+
+    if (longSuffix) {
+      const longSpan = document.createElement("span");
+      longSpan.className = "xfeed-btn-lbl xfeed-btn-lbl-long";
+      longSpan.textContent = ` ${longSuffix}`;
+      btn.append(longSpan);
+    }
+
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -536,35 +584,41 @@ export function applyDecisionToArticle(
   if (userExpanded && (decision.action === "collapse" || decision.action === "hide")) {
     bar.append(
       makeBtn(
-        "✓ Keep (Wrong filter)",
+        "✓",
+        "Keep",
         "Not an upvote — tells xfeed this post should not have been filtered",
         "false_positive",
         "xfeed-btn-keep-bar",
         "wrong_filter",
+        "(Wrong filter)",
       ),
     );
   }
 
   bar.append(
     makeBtn(
-      "👎 Downvote",
+      "👎",
+      "Downvote",
       "Downvote this post for long-term taste (farming, tone, off-taste — stays post-level without penalizing this author)",
       "downvote",
       "xfeed-btn-neg",
     ),
     makeBtn(
-      "👍 Upvote",
+      "👍",
+      "Upvote",
       "Upvote this post (informative, counterpoint, casual, etc.)",
       "upvote",
       "xfeed-btn-pos",
     ),
     makeBtn(
-      "🔁 Seen 24h",
+      "🔁",
+      "Seen 24h",
       "Already saw this story — snooze similar posts for 24h without affecting your long-term taste model",
       "seen_story",
     ),
     makeBtn(
-      "🔇 Less @author",
+      "🔇",
+      "Less @author",
       "Show less from this author overall",
       "less_author",
       "xfeed-btn-neg",
