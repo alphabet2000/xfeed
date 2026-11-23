@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xfeed Tuning</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>xfeed</h1>
+      <span class="subtitle">Personal X Customization Engine</span>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="opt-enabled" />
+      <span>Active</span>
+    </label>
+  </header>
+
+  <section class="card">
+    <h2>Feed Controls</h2>
+    <label class="row">
+      <span>Display Mode</span>
+      <select id="opt-display-mode">
+        <option value="collapse">Collapse stub (reversible)</option>
+        <option value="hide">Hard hide</option>
+      </select>
+    </label>
+    <label class="row">
+      <span>Hide Promoted / Ads</span>
+      <input type="checkbox" id="opt-hide-promoted" />
+    </label>
+    <label class="row">
+      <span>Hide Reposts</span>
+      <input type="checkbox" id="opt-hide-reposts" />
+    </label>
+    <label class="row">
+      <span>Forward "Not interested" to X</span>
+      <input type="checkbox" id="opt-forward-x" />
+    </label>
+    <label class="row">
+      <span>Show Score Badges</span>
+      <input type="checkbox" id="opt-score-badge" />
+    </label>
+    <label class="row">
+      <span>Hide Right Sidebar (Desktop X)</span>
+      <input type="checkbox" id="opt-hide-sidebar" />
+    </label>
+    <label class="row">
+      <span>Wider Feed Column (Desktop X)</span>
+      <input type="checkbox" id="opt-wide-timeline" />
+    </label>
+    <label class="row">
+      <span>Auto-Dedupe Repeated Stories (24h)</span>
+      <input type="checkbox" id="opt-dedupe-stories" />
+    </label>
+    <label class="row">
+      <span>AI Taste Judge</span>
+      <input type="checkbox" id="opt-ai-judge" />
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>Feed Philosophy & Learned Taste</h2>
+    <textarea id="taste-philosophy" rows="3" style="width:100%;background:#0f1419;color:#e7e9ea;border:1px solid #2f3336;border-radius:8px;padding:6px;font-size:12px;margin-bottom:6px;"></textarea>
+    <div class="row">
+      <button type="button" id="btn-save-philosophy">Save Philosophy</button>
+      <button type="button" id="btn-reflect-now" class="primary">Reflect / Learn Now</button>
+    </div>
+    <ul id="learned-rules-list" class="list" style="margin-top:6px;"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Keyword & Regex Rules</h2>
+    <form id="rule-form" class="rule-form">
+      <input id="rule-pattern" type="text" placeholder="keyword or regex..." required />
+      <select id="rule-weight">
+        <option value="-5">Filter (-5)</option>
+        <option value="-2.5">Downrank (-2.5)</option>
+        <option value="3">Boost (+3)</option>
+        <option value="5">Strong Boost (+5)</option>
+      </select>
+      <label class="inline-check" title="Treat pattern as regex">
+        <input type="checkbox" id="rule-regex" /> /re/
+      </label>
+      <button type="submit">Add</button>
+    </form>
+    <ul id="rules-list" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Learned Author Weights</h2>
+    <ul id="authors-list" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Remote Sync ($0 Cloudflare Worker)</h2>
+    <div class="sync-fields">
+      <input id="sync-url" type="url" placeholder="https://xfeed-sync.yourname.workers.dev" />
+      <input id="sync-token" type="password" placeholder="Personal SYNC_API_TOKEN" />
+      <div class="row">
+        <label class="inline-check">
+          <input type="checkbox" id="sync-enabled" /> Enable Sync
+        </label>
+        <div class="btn-group">
+          <button type="button" id="btn-save-sync">Save</button>
+          <button type="button" id="btn-sync-now" class="primary">Sync Now</button>
+        </div>
+      </div>
+      <div id="sync-status" class="status-text">Not synced yet</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Recent Feedback</h2>
+    <ul id="feedback-list" class="list"></ul>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

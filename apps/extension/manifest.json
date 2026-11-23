@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "xfeed — Personal X Feed Tuner",
+  "version": "0.1.0",
+  "description": "Personal customization engine for x.com with two-way native X feedback and cross-device sync.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://*.workers.dev/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "xfeed Tuning",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

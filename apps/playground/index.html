@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xfeed — Interactive Test Playground</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Left Column: Realistic x.com DOM Feed Simulator -->
+    <main class="feed-column">
+      <header class="x-topbar">
+        <div class="x-brand">
+          <span class="x-logo">𝕏</span>
+          <span class="x-env-badge">Mock x.com DOM · Running Real xfeed Bundle</span>
+        </div>
+        <div class="x-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected="true" class="x-tab active" data-tab="for_you">
+            For you
+          </button>
+          <button type="button" role="tab" aria-selected="false" class="x-tab" data-tab="following">
+            Following
+          </button>
+        </div>
+      </header>
+
+      <div class="feed-toolbar">
+        <button type="button" id="btn-stream-post" class="tool-btn">+ Stream New Post</button>
+        <button type="button" id="btn-reset-feed" class="tool-btn">Reset Sample Feed</button>
+        <span id="native-toast" class="native-toast" hidden></span>
+      </div>
+
+      <section id="timeline" aria-label="Timeline: Your Home Timeline"></section>
+    </main>
+
+    <!-- Right Column: Live Tuning Drawer & Sync Inspector (Android/Extension Host Simulator) -->
+    <aside class="panel-column">
+      <div class="panel-header">
+        <div>
+          <h1>xfeed Tuning Panel</h1>
+          <p id="stats-summary" class="muted">0 seen · 0 filtered · 0 boosted · rev 1</p>
+        </div>
+        <label class="switch-label">
+          <input type="checkbox" id="opt-enabled" checked />
+          <span>Active</span>
+        </label>
+      </div>
+
+      <section class="card">
+        <h2>Feed Controls</h2>
+        <label class="row">
+          <span>Display Mode</span>
+          <select id="opt-display-mode">
+            <option value="collapse">Collapse stub (reversible)</option>
+            <option value="hide">Hard hide</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Hide Promoted / Ads</span>
+          <input type="checkbox" id="opt-hide-promoted" />
+        </label>
+        <label class="row">
+          <span>Hide Reposts</span>
+          <input type="checkbox" id="opt-hide-reposts" />
+        </label>
+        <label class="row">
+          <span>Hide Link-Only Posts</span>
+          <input type="checkbox" id="opt-hide-links" />
+        </label>
+        <label class="row">
+          <span>Forward "Not interested" to X</span>
+          <input type="checkbox" id="opt-forward-x" />
+        </label>
+        <label class="row">
+          <span>Show Score Badges</span>
+          <input type="checkbox" id="opt-score-badge" />
+        </label>
+        <label class="row">
+          <span>AI Taste Judge</span>
+          <input type="checkbox" id="opt-ai-judge" checked />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Feed Philosophy & Learned Taste</h2>
+        <textarea id="taste-philosophy" class="philosophy-box" rows="3"></textarea>
+        <div class="row" style="margin-bottom: 6px;">
+          <button type="button" id="btn-save-philosophy" class="tool-btn">Save Philosophy</button>
+          <button type="button" id="btn-reflect-now" class="primary-btn">Reflect / Learn Now</button>
+        </div>
+        <ul id="learned-rules-list" class="item-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Cloud-Synced Learned Parameters</h2>
+        <p id="model-summary" class="muted" style="margin-bottom: 6px;">Trained on 0 events</p>
+        <ul id="model-weights-list" class="item-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Keyword & Regex Rules</h2>
+        <form id="rule-form" class="rule-form">
+          <input id="rule-pattern" type="text" placeholder="e.g. rust, giveaway, crypto" required />
+          <select id="rule-weight">
+            <option value="-5">Filter (-5)</option>
+            <option value="-2.5">Downrank (-2.5)</option>
+            <option value="3.5">Boost (+3.5)</option>
+            <option value="5">Strong Boost (+5)</option>
+          </select>
+          <label class="inline-check" title="Regex">
+            <input type="checkbox" id="rule-regex" /> /re/
+          </label>
+          <button type="submit" class="primary-btn">Add</button>
+        </form>
+        <ul id="rules-list" class="item-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Learned Author Weights</h2>
+        <ul id="authors-list" class="item-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Remote Sync (Built-in Dev Worker)</h2>
+        <div class="sync-box">
+          <input id="sync-url" type="url" value="http://127.0.0.1:4173" />
+          <input id="sync-token" type="text" value="playground-token" />
+          <div class="row">
+            <label class="inline-check">
+              <input type="checkbox" id="sync-enabled" checked /> Auto Sync
+            </label>
+            <button type="button" id="btn-sync-now" class="primary-btn">Sync Now</button>
+          </div>
+          <div id="sync-status" class="muted">Connected to local sync endpoint</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Live Event & X-Feedback Log</h2>
+        <ul id="event-log" class="item-list log-list"></ul>
+      </section>
+    </aside>
+  </div>
+
+  <!-- X-style Portal Container for Caret Overflow Menus -->
+  <div id="layers"></div>
+
+  <script src="/playground.js"></script>
+  <!-- Load the EXACT compiled Android WebView / Shared Adapter bundle -->
+  <script src="/xfeed-bundle.js"></script>
+</body>
+</html>
