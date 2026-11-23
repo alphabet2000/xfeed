@@ -65,11 +65,14 @@ export function injectStyles(): void {
     }
 
     .xfeed-hidden-cell,
-    [data-xfeed-state="hidden"] {
+    [data-xfeed-state="hidden"],
+    body [data-testid="cellInnerDiv"][data-xfeed-state="hidden"] {
       border: none !important;
     }
     .xfeed-hidden-cell > *,
-    [data-xfeed-state="hidden"] > * {
+    [data-xfeed-state="hidden"] > *,
+    body [data-testid="cellInnerDiv"][data-xfeed-state="hidden"] > *,
+    body article[data-testid="tweet"][data-xfeed-state="hidden"] {
       display: none !important;
       height: 0 !important;
       margin: 0 !important;
@@ -96,8 +99,13 @@ export function injectStyles(): void {
       display: none !important;
     }
     .xfeed-collapsed-article,
-    article[data-xfeed-state="collapsed"] {
+    article[data-xfeed-state="collapsed"],
+    body article[data-testid="tweet"][data-xfeed-state="collapsed"] {
       display: none !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
     }
     .xfeed-collapse-stub {
       display: flex;
@@ -368,6 +376,7 @@ export function applyDecisionToArticle(
   cell.removeAttribute("data-xfeed-state");
   article.classList.remove("xfeed-collapsed-article", "xfeed-boosted");
   article.removeAttribute("data-xfeed-state");
+  article.style.removeProperty("display");
   cell.querySelectorAll(".xfeed-collapse-stub, .xfeed-action-bar").forEach((el) => el.remove());
 
   if (!profile.uiOptions.enabled) {
@@ -378,6 +387,7 @@ export function applyDecisionToArticle(
   if (decision.action === "hide" && !userExpanded) {
     cell.classList.add("xfeed-hidden-cell");
     cell.setAttribute("data-xfeed-state", "hidden");
+    article.style.setProperty("display", "none", "important");
     article.dataset.xfeedExpected = "hide";
     return;
   }
@@ -385,6 +395,7 @@ export function applyDecisionToArticle(
   if (decision.action === "collapse" && !userExpanded) {
     article.classList.add("xfeed-collapsed-article");
     article.setAttribute("data-xfeed-state", "collapsed");
+    article.style.setProperty("display", "none", "important");
     article.dataset.xfeedExpected = "collapse";
     const stub = document.createElement("div");
     stub.className = "xfeed-collapse-stub";

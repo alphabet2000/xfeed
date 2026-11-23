@@ -315,6 +315,7 @@ export class XFeedController {
   }
 
   reprocessAll(force: boolean): void {
+    injectStyles();
     applyLayoutOptions(this.profile);
     hideNativeDismissedBanners(this.profile.uiOptions.enabled);
     const currentPath = window.location.pathname;
