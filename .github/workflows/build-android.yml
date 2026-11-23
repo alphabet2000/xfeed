@@ -34,9 +34,22 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
+      - name: Restore consistent Android debug keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+            chmod 600 "$HOME/.android/debug.keystore"
+            echo "Restored persistent debug keystore for in-place APK upgrades."
+          else
+            echo "No ANDROID_DEBUG_KEYSTORE_BASE64 secret configured; using runner default debug keystore."
+          fi
+
       - name: Assemble Android Debug APK
         working-directory: apps/android
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug -PversionCode=${{ github.run_number }} -PversionName=0.1.${{ github.run_number }} --stacktrace
 
       - name: Upload Android Debug APK
         uses: actions/upload-artifact@v4
