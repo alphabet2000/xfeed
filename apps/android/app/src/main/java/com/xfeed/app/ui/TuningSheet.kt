@@ -331,7 +331,7 @@ fun TuningSheet(
 
             HorizontalDivider()
 
-            Text("Remote Sync ($0 Cloudflare Worker)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Remote Sync (\$0 Cloudflare Worker)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = syncUrl,
                 onValueChange = { syncUrl = it },

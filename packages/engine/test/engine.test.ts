@@ -397,3 +397,78 @@ test("Less @author collapses both the clicked post and subsequent posts from tha
     "collapse",
   );
 });
+
+test("Seen 24h respects Hard Hide mode on clicked, similar, and semantically snoozed posts", () => {
+  const engine = new CustomizationEngine();
+  const now = Date.parse("2026-06-01T12:00:00.000Z");
+  let profile = createDefaultProfile(new Date(now).toISOString());
+  profile = {
+    ...profile,
+    authorWeights: { fav_author: 4.0 },
+    uiOptions: {
+      ...profile.uiOptions,
+      displayMode: "hide",
+    },
+  };
+  let history = [] as ReturnType<CustomizationEngine["applyFeedback"]>["feedbackHistory"];
+
+  const post1 = makePost({
+    id: "sn-1",
+    authorHandle: "fav_author",
+    text: "Breaking: Acme acquires BetaCorp for 12 billion dollars in cash deal",
+    hashtags: ["acme"],
+  });
+  const post2 = makePost({
+    id: "sn-2",
+    authorHandle: "fav_author",
+    text: "Acme acquires BetaCorp for 12 billion dollars in surprise buyout",
+    hashtags: ["acme"],
+  });
+  const post3 = makePost({
+    id: "sn-3",
+    authorHandle: "fav_author",
+    text: "Completely rephrased headline about the big enterprise merger",
+  });
+
+  const applied = engine.applyFeedback(profile, history, {
+    post: post1,
+    action: "seen_story",
+    sourceClient: "extension",
+    now,
+  });
+  profile = applied.profile;
+  history = applied.feedbackHistory;
+
+  const positiveVerdict = {
+    postId: post1.id,
+    worthwhile: 8.5,
+    farming: 0.5,
+    category: "insight" as const,
+    reason: "High signal post",
+    similarExampleIds: [],
+    source: "workers-ai" as const,
+    evaluatedAt: new Date(now).toISOString(),
+  };
+
+  // Clicked post must fully hide in Hard Hide mode even with boosted author & positive AI verdict
+  assert.equal(engine.evaluate(post1, profile, history, now + 1000, positiveVerdict).action, "hide");
+  // Similar story post must also fully hide in Hard Hide mode (not stay as a collapse stub)
+  assert.equal(
+    engine.evaluate(post2, profile, history, now + 60_000, { ...positiveVerdict, postId: post2.id }).action,
+    "hide",
+  );
+  // Semantic story-snooze verdict from worker must also hide in Hard Hide mode despite boosted author
+  assert.equal(
+    engine.evaluate(post3, profile, history, now + 60_000, {
+      postId: post3.id,
+      worthwhile: 1.5,
+      farming: 8.0,
+      category: "neutral",
+      reason: "Snoozed 24h (acme · acquires · betacorp)",
+      similarExampleIds: [],
+      source: "story-snooze",
+      evaluatedAt: new Date(now).toISOString(),
+    }).action,
+    "hide",
+  );
+});

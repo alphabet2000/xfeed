@@ -3,6 +3,8 @@ import {
   createDefaultProfile,
   ensureProfileDefaults,
   extractTerms,
+  mergeFeedback,
+  mergeSnoozes,
 } from "../../engine/src/index.ts";
 import type {
   FeedbackAction,
@@ -108,8 +110,34 @@ export class XFeedController {
     this.feedbackHistory = state.feedbackHistory;
 
     this.bridge.onStateUpdated?.((nextState) => {
-      this.profile = ensureProfileDefaults(nextState.profile);
-      this.feedbackHistory = nextState.feedbackHistory;
+      const incoming = ensureProfileDefaults(nextState.profile);
+      const isStale =
+        incoming.revision < this.profile.revision ||
+        (incoming.revision === this.profile.revision &&
+          Date.parse(incoming.updatedAt) < Date.parse(this.profile.updatedAt));
+      if (isStale) {
+        this.profile = {
+          ...this.profile,
+          storySnoozes: mergeSnoozes(
+            this.profile.storySnoozes ?? [],
+            incoming.storySnoozes ?? [],
+          ),
+        };
+        this.feedbackHistory = mergeFeedback(
+          this.feedbackHistory,
+          nextState.feedbackHistory,
+        );
+      } else {
+        const isExplicitReset =
+          nextState.feedbackHistory.length === 0 &&
+          incoming.revision > this.profile.revision &&
+          Object.keys(incoming.authorWeights).length === 0 &&
+          (incoming.storySnoozes?.length ?? 0) === 0;
+        this.profile = incoming;
+        this.feedbackHistory = isExplicitReset
+          ? []
+          : mergeFeedback(this.feedbackHistory, nextState.feedbackHistory);
+      }
       const nextTasteKey = this.computeTasteKey(this.profile);
       if (nextTasteKey !== this.lastTasteKey) {
         this.lastTasteKey = nextTasteKey;
@@ -275,6 +303,8 @@ export class XFeedController {
     });
     this.profile = result.profile;
     this.feedbackHistory = result.feedbackHistory;
+    // Update DOM immediately (0ms feedback) before persisting & syncing in background
+    this.reprocessAll(true);
 
     await this.bridge.recordFeedback(
       result.event,
@@ -310,7 +340,20 @@ export class XFeedController {
       const isFocalPost = Boolean(focalStatusId && post.id === focalStatusId);
       const isExpanded = isFocalPost || this.userExpandedPostIds.has(post.id);
       const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${isExpanded ? "e" : "n"}`;
-      if (!force && article.dataset.xfeedRev === renderStamp) continue;
+      const cell = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') ?? article;
+      const expected = article.dataset.xfeedExpected;
+      const domIntact =
+        article.dataset.xfeedRev === renderStamp &&
+        ((expected === "disabled" && !this.profile.uiOptions.enabled) ||
+          (expected === "hide" && cell.dataset.xfeedState === "hidden") ||
+          (expected === "collapse" &&
+            article.dataset.xfeedState === "collapsed" &&
+            Boolean(cell.querySelector(".xfeed-collapse-stub"))) ||
+          (expected === "show" &&
+            cell.dataset.xfeedState !== "hidden" &&
+            article.dataset.xfeedState !== "collapsed" &&
+            Boolean(cell.querySelector(".xfeed-action-bar"))));
+      if (!force && domIntact) continue;
 
       const ownSeen = this.seenStories.get(post.id);
       const earlierSeen =

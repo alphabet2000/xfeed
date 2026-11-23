@@ -53,17 +53,42 @@ class SyncRepository {
             }
 
             val remoteLearnedModel = remoteState.optJSONObject("learnedModel")
+            val mergedSnoozes = mergeSnoozes(
+                current.profile.storySnoozes,
+                remoteProfile?.storySnoozes ?: JSONArray()
+            )
+            val remoteSnoozeIds = extractSnoozeIds(remoteProfile?.storySnoozes)
+            val hasNewLocalSnoozes = extractSnoozeIds(current.profile.storySnoozes).any {
+                it !in remoteSnoozeIds
+            }
             var mergedProfile = mergeProfiles(current.profile, remoteProfile)
             if (remoteLearnedModel != null && remoteLearnedModel.length() > 0) {
                 mergedProfile = mergedProfile.copy(learnedModel = remoteLearnedModel)
             }
-            if (remoteProfile == null || current.profile.revision > remoteProfile.revision) {
+            val remoteRev = remoteProfile?.revision ?: 0
+            val needsPush = remoteProfile == null || current.profile.revision > remoteRev || hasNewLocalSnoozes
+            val nextRev = if (hasNewLocalSnoozes && mergedProfile.revision <= remoteRev) {
+                remoteRev + 1
+            } else {
+                mergedProfile.revision
+            }
+            mergedProfile = mergedProfile.copy(
+                revision = nextRev,
+                updatedAt = if (nextRev > mergedProfile.revision) Instant.now().toString() else mergedProfile.updatedAt,
+                storySnoozes = mergedSnoozes
+            )
+            if (needsPush) {
                 val putBody = JSONObject().put("profile", mergedProfile.toJson()).toString()
                 val putResp = requestJson("PUT", "$base/v1/profile", cfg, putBody)
-                mergedProfile = TuningProfile.fromJson(putResp.optJSONObject("profile") ?: mergedProfile.toJson())
-                if (remoteLearnedModel != null && remoteLearnedModel.length() > 0) {
-                    mergedProfile = mergedProfile.copy(learnedModel = remoteLearnedModel)
-                }
+                val pushedProfile = TuningProfile.fromJson(putResp.optJSONObject("profile") ?: mergedProfile.toJson())
+                mergedProfile = pushedProfile.copy(
+                    learnedModel = if (remoteLearnedModel != null && remoteLearnedModel.length() > 0) {
+                        remoteLearnedModel
+                    } else {
+                        pushedProfile.learnedModel
+                    },
+                    storySnoozes = mergeSnoozes(mergedSnoozes, pushedProfile.storySnoozes)
+                )
             }
 
             val mergedFeedback = mergeFeedback(current.feedbackHistory, remoteEvents)
@@ -133,6 +158,38 @@ class SyncRepository {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun extractSnoozeIds(arr: JSONArray?): Set<String> {
+        if (arr == null) return emptySet()
+        val ids = LinkedHashSet<String>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optString("id", "")
+            if (id.isNotEmpty()) ids.add(id)
+        }
+        return ids
+    }
+
+    private fun mergeSnoozes(local: JSONArray, remote: JSONArray): JSONArray {
+        val nowMs = System.currentTimeMillis()
+        val byId = LinkedHashMap<String, JSONObject>()
+        fun addActive(arr: JSONArray) {
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "")
+                val exp = parseTs(obj.optString("expiresAt", ""))
+                if (id.isNotEmpty() && exp > nowMs) {
+                    byId[id] = obj
+                }
+            }
+        }
+        addActive(remote)
+        addActive(local)
+        val sorted = byId.values
+            .sortedByDescending { parseTs(it.optString("createdAt", "")) }
+            .take(100)
+        return JSONArray().apply { sorted.forEach { put(it) } }
     }
 
     private fun mergeProfiles(local: TuningProfile, remote: TuningProfile?): TuningProfile {

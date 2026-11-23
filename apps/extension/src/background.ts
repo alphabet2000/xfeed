@@ -2,6 +2,9 @@ import {
   distillTasteRulesLocally,
   ensureProfileDefaults,
   evaluateWithLocalRubric,
+  mergeFeedback,
+  mergeProfile,
+  mergeSnoozes,
 } from "../../../packages/engine/src/index.ts";
 import { SyncClient } from "../../../packages/engine/src/sync.ts";
 import type {
@@ -13,39 +16,78 @@ import { loadExtensionStore, saveSyncOutcome } from "./storage.ts";
 
 const SYNC_ALARM_NAME = "xfeed_periodic_sync";
 let syncInFlight = false;
+let syncQueued = false;
 
 async function runExtensionSync(): Promise<{ ok: boolean; status: string }> {
-  if (syncInFlight) return { ok: false, status: "Sync already running" };
+  if (syncInFlight) {
+    syncQueued = true;
+    return { ok: true, status: "Sync queued" };
+  }
   syncInFlight = true;
+  let lastResult: { ok: boolean; status: string } = { ok: false, status: "Sync not configured" };
   try {
-    const store = await loadExtensionStore();
-    if (!store.syncConfig.enabled || !store.syncConfig.endpointUrl || !store.syncConfig.apiToken) {
-      return { ok: false, status: "Sync not configured" };
-    }
+    do {
+      syncQueued = false;
+      const store = await loadExtensionStore();
+      if (!store.syncConfig.enabled || !store.syncConfig.endpointUrl || !store.syncConfig.apiToken) {
+        lastResult = { ok: false, status: "Sync not configured" };
+        break;
+      }
 
-    const client = new SyncClient(store.syncConfig);
-    const result = await client.syncAll(
-      store.profile,
-      store.feedbackHistory,
-      store.pendingFeedback,
-      store.lastSyncedAt,
-    );
+      const pushedIds = new Set(store.pendingFeedback.map((e) => e.id));
+      const client = new SyncClient(store.syncConfig);
+      const result = await client.syncAll(
+        store.profile,
+        store.feedbackHistory,
+        store.pendingFeedback,
+        store.lastSyncedAt,
+      );
 
-    if (result.ok) {
-      const status = `Synced (${result.pushedFeedbackCount}↑ / ${result.pulledFeedbackCount}↓)`;
-      await saveSyncOutcome({
-        profile: result.profile,
-        feedbackHistory: result.feedbackHistory,
-        pendingFeedback: [],
-        lastSyncedAt: result.serverTime ?? new Date().toISOString(),
-        lastSyncStatus: status,
-      });
-      return { ok: true, status };
-    }
+      if (result.ok) {
+        // Re-read storage so any user clicks made while sync was in flight are NEVER overwritten!
+        const latestStore = await loadExtensionStore();
+        const mergedProfileBase = ensureProfileDefaults(
+          mergeProfile(latestStore.profile, result.profile),
+        );
+        const finalProfile: TuningProfile = {
+          ...mergedProfileBase,
+          learnedModel: result.profile.learnedModel,
+          storySnoozes: mergeSnoozes(
+            latestStore.profile.storySnoozes ?? [],
+            result.profile.storySnoozes ?? [],
+          ),
+        };
+        const finalHistory = mergeFeedback(
+          latestStore.feedbackHistory,
+          result.feedbackHistory,
+        );
+        const remainingPending = latestStore.pendingFeedback.filter(
+          (ev) => !pushedIds.has(ev.id),
+        );
+        if (
+          remainingPending.length > 0 ||
+          latestStore.profile.revision > store.profile.revision
+        ) {
+          syncQueued = true;
+        }
 
-    const errStatus = `Sync error: ${result.error ?? "Unknown error"}`;
-    await saveSyncOutcome({ lastSyncStatus: errStatus });
-    return { ok: false, status: errStatus };
+        const status = `Synced (${result.pushedFeedbackCount}↑ / ${result.pulledFeedbackCount}↓)`;
+        await saveSyncOutcome({
+          profile: finalProfile,
+          feedbackHistory: finalHistory,
+          pendingFeedback: remainingPending,
+          lastSyncedAt: result.serverTime ?? new Date().toISOString(),
+          lastSyncStatus: status,
+        });
+        lastResult = { ok: true, status };
+      } else {
+        const errStatus = `Sync error: ${result.error ?? "Unknown error"}`;
+        await saveSyncOutcome({ lastSyncStatus: errStatus });
+        lastResult = { ok: false, status: errStatus };
+        break;
+      }
+    } while (syncQueued);
+    return lastResult;
   } finally {
     syncInFlight = false;
   }

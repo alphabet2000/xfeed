@@ -113,14 +113,18 @@ data class UiOptions(
 }
 
 data class TasteProfile(
-    val philosophy: String = "Keep genuine human posts—whether informative, casual/funny, or a brief reply showing the other side of an opinion. Filter out engagement farming, reply-bait, rage-bait, DM funnels, and recycled platitudes—even from authors I otherwise like.",
+    val philosophy: String = "Keep genuine human posts—whether informative, casual/funny, or a brief reply showing the other side of an opinion. Filter out engagement farming, reply-bait, rage-bait, DM funnels, and off-taste noise—even from authors I otherwise like.",
     val learnedRules: List<String> = emptyList(),
-    val aiJudgeEnabled: Boolean = true
+    val aiJudgeEnabled: Boolean = true,
+    val reflectCadence: String = "weekly",
+    val lastReflectedAt: String? = null
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("philosophy", philosophy)
         put("learnedRules", JSONArray(learnedRules))
         put("aiJudgeEnabled", aiJudgeEnabled)
+        put("reflectCadence", reflectCadence)
+        if (!lastReflectedAt.isNullOrBlank()) put("lastReflectedAt", lastReflectedAt)
     }
 
     companion object {
@@ -137,7 +141,11 @@ data class TasteProfile(
             return TasteProfile(
                 philosophy = obj.optString("philosophy", TasteProfile().philosophy),
                 learnedRules = rules,
-                aiJudgeEnabled = obj.optBoolean("aiJudgeEnabled", true)
+                aiJudgeEnabled = obj.optBoolean("aiJudgeEnabled", true),
+                reflectCadence = obj.optString("reflectCadence", "weekly"),
+                lastReflectedAt = if (obj.has("lastReflectedAt") && !obj.isNull("lastReflectedAt")) {
+                    obj.optString("lastReflectedAt")
+                } else null
             )
         }
     }
@@ -223,10 +231,12 @@ data class FeedbackEvent(
     val postId: String,
     val authorHandle: String,
     val action: String,
+    val reasonTag: String? = null,
     val syncedToX: Boolean,
     val sourceClient: String,
     val createdAt: String,
     val postSnippet: String? = null,
+    val quotedSnippet: String? = null,
     val terms: List<String> = emptyList()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -234,10 +244,12 @@ data class FeedbackEvent(
         put("postId", postId)
         put("authorHandle", authorHandle)
         put("action", action)
+        if (!reasonTag.isNullOrBlank()) put("reasonTag", reasonTag)
         put("syncedToX", syncedToX)
         put("sourceClient", sourceClient)
         put("createdAt", createdAt)
         if (!postSnippet.isNullOrBlank()) put("postSnippet", postSnippet)
+        if (!quotedSnippet.isNullOrBlank()) put("quotedSnippet", quotedSnippet)
         if (terms.isNotEmpty()) put("terms", JSONArray(terms))
     }
 
@@ -255,12 +267,18 @@ data class FeedbackEvent(
                 id = obj.optString("id", UUID.randomUUID().toString()),
                 postId = obj.optString("postId", ""),
                 authorHandle = obj.optString("authorHandle", ""),
-                action = obj.optString("action", "not_interested"),
+                action = obj.optString("action", "downvote"),
+                reasonTag = if (obj.has("reasonTag") && !obj.isNull("reasonTag")) {
+                    obj.optString("reasonTag")
+                } else null,
                 syncedToX = obj.optBoolean("syncedToX", false),
                 sourceClient = obj.optString("sourceClient", "android"),
                 createdAt = obj.optString("createdAt", Instant.now().toString()),
                 postSnippet = if (obj.has("postSnippet") && !obj.isNull("postSnippet")) {
                     obj.optString("postSnippet")
+                } else null,
+                quotedSnippet = if (obj.has("quotedSnippet") && !obj.isNull("quotedSnippet")) {
+                    obj.optString("quotedSnippet")
                 } else null,
                 terms = terms
             )

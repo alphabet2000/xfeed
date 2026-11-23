@@ -193,23 +193,45 @@ export class SyncClient {
               mergedFeedback,
               mergedProfile.learnedModel.scorerWeights,
             );
+      const remoteSnoozeIds = new Set(
+        (remote.profile?.storySnoozes ?? []).map((s) => s.id),
+      );
+      const hasNewLocalSnoozes = (localProfile.storySnoozes ?? []).some(
+        (s) => !remoteSnoozeIds.has(s.id),
+      );
       const mergedSnoozes = mergeSnoozes(
         localProfile.storySnoozes ?? [],
         remote.profile?.storySnoozes ?? [],
       );
+      const remoteRev = remote.profile?.revision ?? 0;
+      const needsPush =
+        !remote.profile || localProfile.revision > remoteRev || hasNewLocalSnoozes;
+      const nextRevision =
+        hasNewLocalSnoozes && mergedProfile.revision <= remoteRev
+          ? remoteRev + 1
+          : mergedProfile.revision;
       mergedProfile = {
         ...mergedProfile,
+        revision: nextRevision,
+        updatedAt:
+          nextRevision > mergedProfile.revision
+            ? new Date().toISOString()
+            : mergedProfile.updatedAt,
         learnedModel: unifiedModel,
         storySnoozes: mergedSnoozes,
       };
 
-      // Push local profile if it is newer than remote (or remote has no profile yet)
-      const remoteRev = remote.profile?.revision ?? 0;
-      if (!remote.profile || localProfile.revision > remoteRev) {
+      // Push local profile if it is newer than remote, has new snoozes, or remote has no profile yet
+      if (needsPush) {
         const pushed = await this.pushProfile(mergedProfile);
+        const normalizedPushed = ensureProfileDefaults(pushed.profile);
         mergedProfile = {
-          ...ensureProfileDefaults(pushed.profile),
+          ...normalizedPushed,
           learnedModel: unifiedModel,
+          storySnoozes: mergeSnoozes(
+            mergedSnoozes,
+            normalizedPushed.storySnoozes ?? [],
+          ),
         };
       }
 

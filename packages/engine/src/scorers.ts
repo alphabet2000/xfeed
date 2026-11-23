@@ -190,6 +190,19 @@ export class TasteJudgeScorer implements PostScorer {
       return EMPTY_RESULT;
     }
     const verdict = ctx.judgeVerdict;
+    if (verdict.source === "story-snooze") {
+      return {
+        delta: -6,
+        hardAction: "collapse",
+        reasons: [
+          {
+            scorerId: this.id,
+            delta: -6,
+            message: verdict.reason || "Snoozed 24h",
+          },
+        ],
+      };
+    }
     const mult = ctx.profile.learnedModel?.scorerWeights?.tasteJudge ?? 1.0;
     const delta = Number((verdictToScoreDelta(verdict) * mult).toFixed(2));
     const labelMap: Record<string, string> = {

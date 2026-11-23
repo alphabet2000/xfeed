@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -85,18 +86,58 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            var syncInFlight by remember { mutableStateOf(false) }
+            var syncQueued by remember { mutableStateOf(false) }
+
             fun triggerSync(stateOverride: PersistedAppState? = null) {
-                val targetState = stateOverride ?: appState
-                if (!targetState.syncConfig.enabled) return
+                val initialState = stateOverride ?: appState
+                if (!initialState.syncConfig.enabled) return
+                if (syncInFlight) {
+                    syncQueued = true
+                    return
+                }
+                syncInFlight = true
                 scope.launch {
-                    syncStatus = "Syncing..."
-                    val result = syncRepository.sync(targetState)
-                    if (result.ok) {
-                        localStore.save(result.state)
-                        appState = result.state
-                        pushStateToWebView(result.state)
+                    try {
+                        var pendingPassState = initialState
+                        do {
+                            syncQueued = false
+                            syncStatus = "Syncing..."
+                            val pushedIds = pendingPassState.pendingFeedback.map { it.id }.toSet()
+                            val result = syncRepository.sync(pendingPassState)
+                            if (result.ok) {
+                                val latest = appState
+                                val mergedProfile = if (latest.profile.revision > result.state.profile.revision) {
+                                    latest.profile.copy(learnedModel = result.state.profile.learnedModel)
+                                } else {
+                                    result.state.profile
+                                }
+                                val mergedHistory = (latest.feedbackHistory + result.state.feedbackHistory)
+                                    .associateBy { it.id }
+                                    .values
+                                    .sortedByDescending { it.createdAt }
+                                    .take(2000)
+                                val remainingPending = latest.pendingFeedback.filter { it.id !in pushedIds }
+                                val finalState = result.state.copy(
+                                    profile = mergedProfile,
+                                    feedbackHistory = mergedHistory,
+                                    pendingFeedback = remainingPending,
+                                    syncConfig = latest.syncConfig
+                                )
+                                localStore.save(finalState)
+                                appState = finalState
+                                pushStateToWebView(finalState)
+                                if (remainingPending.isNotEmpty() || latest.profile.revision > pendingPassState.profile.revision) {
+                                    pendingPassState = finalState
+                                    syncQueued = true
+                                }
+                            }
+                            syncStatus = result.message
+                            if (!result.ok) break
+                        } while (syncQueued)
+                    } finally {
+                        syncInFlight = false
                     }
-                    syncStatus = result.message
                 }
             }
 
@@ -121,6 +162,8 @@ class MainActivity : ComponentActivity() {
                                     settings.databaseEnabled = true
                                     settings.mediaPlaybackRequiresUserGesture = false
                                     settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                    settings.userAgentString = settings.userAgentString.replace("; wv", "")
+                                    webChromeClient = WebChromeClient()
 
                                     val cookieManager = CookieManager.getInstance()
                                     cookieManager.setAcceptCookie(true)

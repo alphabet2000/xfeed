@@ -64,10 +64,12 @@ export function injectStyles(): void {
       }
     }
 
-    .xfeed-hidden-cell {
+    .xfeed-hidden-cell,
+    [data-xfeed-state="hidden"] {
       border: none !important;
     }
-    .xfeed-hidden-cell > * {
+    .xfeed-hidden-cell > *,
+    [data-xfeed-state="hidden"] > * {
       display: none !important;
       height: 0 !important;
       margin: 0 !important;
@@ -75,11 +77,14 @@ export function injectStyles(): void {
       border: none !important;
       overflow: hidden !important;
     }
-    .xfeed-hidden-x-feedback {
+    .xfeed-hidden-x-feedback,
+    [data-xfeed-native-hidden="1"] {
       border: none !important;
     }
     .xfeed-hidden-x-feedback > *,
-    .xfeed-hidden-x-feedback .native-dismissed-banner {
+    .xfeed-hidden-x-feedback .native-dismissed-banner,
+    [data-xfeed-native-hidden="1"] > *,
+    [data-xfeed-native-hidden="1"] .native-dismissed-banner {
       display: none !important;
       height: 0 !important;
       margin: 0 !important;
@@ -90,7 +95,8 @@ export function injectStyles(): void {
     .native-dismissed-banner {
       display: none !important;
     }
-    .xfeed-collapsed-article {
+    .xfeed-collapsed-article,
+    article[data-xfeed-state="collapsed"] {
       display: none !important;
     }
     .xfeed-collapse-stub {
@@ -251,10 +257,12 @@ export function hideNativeDismissedBanners(enabled: boolean): void {
     // Only inspect non-tweet cells (X replaces the dismissed tweet with feedback/follow-up rows)
     if (cell.querySelector('article[data-testid="tweet"]')) {
       cell.classList.remove("xfeed-hidden-x-feedback");
+      cell.removeAttribute("data-xfeed-native-hidden");
       continue;
     }
     if (!enabled) {
       cell.classList.remove("xfeed-hidden-x-feedback");
+      cell.removeAttribute("data-xfeed-native-hidden");
       continue;
     }
     const text = (cell.innerText ?? cell.textContent ?? "").trim().toLowerCase();
@@ -264,6 +272,7 @@ export function hideNativeDismissedBanners(enabled: boolean): void {
       NATIVE_FEEDBACK_PHRASES.some((phrase) => text.includes(phrase))
     ) {
       cell.classList.add("xfeed-hidden-x-feedback");
+      cell.setAttribute("data-xfeed-native-hidden", "1");
     }
   }
 }
@@ -356,20 +365,27 @@ export function applyDecisionToArticle(
 
   // Reset previous state cleanly on both cell and article
   cell.classList.remove("xfeed-hidden-cell", "xfeed-boosted");
+  cell.removeAttribute("data-xfeed-state");
   article.classList.remove("xfeed-collapsed-article", "xfeed-boosted");
+  article.removeAttribute("data-xfeed-state");
   cell.querySelectorAll(".xfeed-collapse-stub, .xfeed-action-bar").forEach((el) => el.remove());
 
   if (!profile.uiOptions.enabled) {
+    article.dataset.xfeedExpected = "disabled";
     return;
   }
 
   if (decision.action === "hide" && !userExpanded) {
     cell.classList.add("xfeed-hidden-cell");
+    cell.setAttribute("data-xfeed-state", "hidden");
+    article.dataset.xfeedExpected = "hide";
     return;
   }
 
   if (decision.action === "collapse" && !userExpanded) {
     article.classList.add("xfeed-collapsed-article");
+    article.setAttribute("data-xfeed-state", "collapsed");
+    article.dataset.xfeedExpected = "collapse";
     const stub = document.createElement("div");
     stub.className = "xfeed-collapse-stub";
     const reasonText =
@@ -398,6 +414,7 @@ export function applyDecisionToArticle(
   }
 
   // Attach compact decoupled feedback bar at the BOTTOM of the tweet cell (never inside horizontal flex <article>)
+  article.dataset.xfeedExpected = "show";
   const bar = document.createElement("div");
   bar.className = "xfeed-action-bar";
 

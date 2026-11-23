@@ -43,10 +43,8 @@ function resolveDecision(
 
   if (hardAction === "show") {
     action = "show";
-  } else if (hardAction === "hide") {
+  } else if (hardAction === "hide" || hardAction === "collapse") {
     action = profile.uiOptions.displayMode === "hide" ? "hide" : "collapse";
-  } else if (hardAction === "collapse") {
-    action = "collapse";
   } else if (hardAction === "boost") {
     action = "boost";
   } else if (rounded <= profile.thresholds.hideBelow) {

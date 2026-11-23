@@ -148,6 +148,38 @@ test("end-to-end sync between Android and Desktop Extension via sync server", as
     assert.equal(androidAfter.profile.learnedModel.trainedOnCount, 2);
     assert.ok((androidAfter.profile.learnedModel.featureWeights["cue:counterpoint"] ?? 0) > 0);
     assert.ok((androidAfter.profile.learnedModel.featureWeights["t:#crypto"] ?? 0) < 0);
+
+    // 9. Seen 24h snooze survives sync even when local profile revision is behind server revision
+    const staleLocal = {
+      ...androidAfter.profile,
+      revision: Math.max(1, androidAfter.profile.revision - 1),
+    };
+    const snoozeFb = engine.applyFeedback(staleLocal, androidAfter.feedbackHistory, {
+      post: {
+        id: "snooze-999",
+        authorHandle: "news_wire",
+        text: "Breaking: Quantum chip milestone announced by lab researchers today",
+        hashtags: ["quantum"],
+      },
+      action: "seen_story",
+      sourceClient: "android",
+    });
+    const snoozeSync = await androidSync.syncAll(
+      snoozeFb.profile,
+      snoozeFb.feedbackHistory,
+      [snoozeFb.event],
+    );
+    assert.equal(snoozeSync.ok, true);
+    assert.ok(snoozeSync.profile.storySnoozes.some((s) => s.postId === "snooze-999"));
+
+    // Desktop syncs and receives the 24h story snooze too
+    const desktopSnoozeSync = await desktopSync.syncAll(
+      desktopAfter.profile,
+      desktopAfter.feedbackHistory,
+      [],
+    );
+    assert.equal(desktopSnoozeSync.ok, true);
+    assert.ok(desktopSnoozeSync.profile.storySnoozes.some((s) => s.postId === "snooze-999"));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
