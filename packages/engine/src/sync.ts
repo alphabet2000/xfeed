@@ -50,9 +50,17 @@ export class SyncClient {
   private readonly config: SyncConfig;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(config: SyncConfig, fetchImpl: typeof fetch = globalThis.fetch) {
+  constructor(
+    config: SyncConfig,
+    fetchImpl?: typeof fetch,
+  ) {
     this.config = config;
-    this.fetchImpl = fetchImpl;
+    // Wrap native fetch so calling it from SyncClient never loses globalThis receiver ("Illegal invocation" in Chrome Service Workers)
+    if (!fetchImpl || fetchImpl === globalThis.fetch) {
+      this.fetchImpl = (input, init) => globalThis.fetch(input, init);
+    } else {
+      this.fetchImpl = fetchImpl;
+    }
   }
 
   private get baseUrl(): string {
