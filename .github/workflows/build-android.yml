@@ -39,10 +39,9 @@ jobs:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            mkdir -p "$HOME/.android"
-            printf '%s' "$KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
-            chmod 600 "$HOME/.android/debug.keystore"
-            echo "Restored persistent debug keystore for in-place APK upgrades."
+            printf '%s' "$KEYSTORE_B64" | base64 -d > apps/android/app/ci-debug.keystore
+            chmod 600 apps/android/app/ci-debug.keystore
+            echo "Restored persistent debug keystore to apps/android/app/ci-debug.keystore."
           else
             echo "No ANDROID_DEBUG_KEYSTORE_BASE64 secret configured; using runner default debug keystore."
           fi
@@ -50,6 +49,49 @@ jobs:
       - name: Assemble Android Debug APK
         working-directory: apps/android
         run: gradle assembleDebug -PversionCode=${{ github.run_number }} -PversionName=0.1.${{ github.run_number }} --stacktrace
+
+      - name: Verify APK signing certificate matches persistent keystore
+        run: |
+          if [ -f apps/android/app/ci-debug.keystore ]; then
+            python3 - <<'PY'
+          import hashlib, struct, subprocess
+
+          apk = "apps/android/app/build/outputs/apk/debug/app-debug.apk"
+          ks = "apps/android/app/ci-debug.keystore"
+
+          expected_der = subprocess.check_output([
+              "keytool", "-exportcert", "-keystore", ks,
+              "-storepass", "android", "-alias", "androiddebugkey"
+          ])
+          expected_sha = hashlib.sha256(expected_der).hexdigest()
+
+          data = open(apk, "rb").read()
+          idx = data.rfind(b"APK Sig Block 42")
+          assert idx != -1, "Missing APK Sig Block v2/v3"
+          block_size = struct.unpack_from("<Q", data, idx - 8)[0]
+          block = data[idx - block_size + 16 : idx - 8]
+          pos = 0
+          found = []
+          while pos + 12 <= len(block):
+              pair_len = struct.unpack_from("<Q", block, pos)[0]
+              pair_id = struct.unpack_from("<I", block, pos + 8)[0]
+              val = block[pos + 12 : pos + 8 + pair_len]
+              pos += 8 + pair_len
+              if pair_id in (0x7109871a, 0xf05368c0):
+                  sd_len = struct.unpack_from("<I", val, 8)[0]
+                  sd = val[12 : 12 + sd_len]
+                  dig_len = struct.unpack_from("<I", sd, 0)[0]
+                  c_off = 4 + dig_len
+                  cert_len = struct.unpack_from("<I", sd, c_off + 4)[0]
+                  cert = sd[c_off + 8 : c_off + 8 + cert_len]
+                  found.append(hashlib.sha256(cert).hexdigest())
+
+          print("Expected cert SHA-256:", expected_sha)
+          print("APK cert SHA-256(s):  ", found)
+          assert expected_sha in found, f"APK was NOT signed with persistent keystore! expected={expected_sha} got={found}"
+          print("Verified: APK is signed with the persistent keystore.")
+          PY
+          fi
 
       - name: Upload Android Debug APK
         uses: actions/upload-artifact@v4

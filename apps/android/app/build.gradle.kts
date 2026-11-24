@@ -16,7 +16,22 @@ android {
         versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val ciKeystore = file("ci-debug.keystore")
+            if (ciKeystore.exists()) {
+                storeFile = ciKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
