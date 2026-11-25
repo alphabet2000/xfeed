@@ -311,11 +311,21 @@ export function distillTasteRulesLocally(
 }
 
 export function verdictToScoreDelta(verdict: JudgeVerdict): number {
-  if (verdict.farming >= 6.5) {
-    return Number((-((verdict.farming - 4.0) * 0.95)).toFixed(2));
+  // Precision-first scoring: only allow strong negative scores capable of collapsing a post
+  // when the judge has very high confidence that the post is blatant farming/spam/rage-bait.
+  const isExplicitSpamCategory =
+    verdict.category === "farming" ||
+    verdict.category === "rage_bait" ||
+    verdict.category === "promo";
+  if (isExplicitSpamCategory && verdict.farming >= 8.0 && verdict.worthwhile <= 3.0) {
+    return Number(Math.max(-5.5, -((verdict.farming - 4.5) * 1.15)).toFixed(2));
   }
+  if (verdict.farming >= 8.5 && verdict.worthwhile <= 3.0) {
+    return Number(Math.max(-5.5, -((verdict.farming - 5.0) * 1.1)).toFixed(2));
+  }
+  // Uncertain or mild negative verdicts are gently capped at -1.5 so they never solo-collapse a post
   const net = (verdict.worthwhile - verdict.farming) * 0.55;
-  return Number(Math.max(-5, Math.min(4.5, net)).toFixed(2));
+  return Number(Math.max(-1.5, Math.min(4.5, net)).toFixed(2));
 }
 
 export function buildJudgeSystemPrompt(profile: TuningProfile): string {
@@ -323,8 +333,13 @@ export function buildJudgeSystemPrompt(profile: TuningProfile): string {
     profile.tasteProfile.learnedRules.length > 0
       ? `\nDistilled user taste rules:\n${profile.tasteProfile.learnedRules.map((r) => `- ${r}`).join("\n")}`
       : "";
-  return `You are a personal X feed taste judge. Separate content the user finds genuinely worthwhile (informative insight, brief counterpoints showing another side, authentic casual posts or humor) from content they dislike (engagement farming, reply-bait, rage-bait, DM funnels, recycled platitudes, or off-taste noise).
-NEVER penalize a post just for being short, casual, or lacking links/stats. Judge each post independently—the same author can post both great posts and posts the user wants filtered.
+  return `You are a precision-first personal X feed taste judge.
+CRITICAL RULE — DEFAULT TO ALLOWING POSTS: A false positive (hiding a post the user wanted to see) is 10x worse than letting a mediocre post through.
+- NEVER penalize a post for being short, casual, using stock/market tickers ($SPX, $QQQ, $VIX, $DXY, gold, copper, etc.), or lacking links/explanations.
+- When "hasMedia": true, the post has an attached chart, image, or video that you CANNOT see. NEVER mark a short caption with "hasMedia": true as farming, promo, or low_fit just because the text is brief or cryptic.
+- Reserve farming >= 8.5 (with worthwhile <= 3) STRICTLY for UNMISTAKABLE engagement farming, DM funnels ("comment X and I'll DM you"), giveaway RT bait, blatant rage-bait, or scam promos.
+- When uncertain, keep farming <= 4 and worthwhile >= 5 so the post stays visible.
+- Judge each post independently—the same author can post both great posts and posts the user wants filtered.
 
 User's Feed Philosophy:
 ${profile.tasteProfile.philosophy}${learned}

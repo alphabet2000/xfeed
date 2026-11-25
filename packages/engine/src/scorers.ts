@@ -182,10 +182,34 @@ export class AuthorWeightScorer implements PostScorer {
   }
 }
 
+function isTrustedAuthor(handle: string, ctx: ScoringContext): boolean {
+  const norm = normalizeHandle(handle);
+  if (!norm) return false;
+  if ((ctx.profile.authorWeights[norm] ?? 0) < 0) return false;
+  let positiveOrKept = 0;
+  let negative = 0;
+  for (const ev of ctx.feedbackHistory) {
+    if (normalizeHandle(ev.authorHandle) !== norm) continue;
+    if (isPositiveFeedbackAction(ev.action)) positiveOrKept += 1;
+    else if (
+      isNegativeFeedbackAction(ev.action) ||
+      ev.action === "less_author" ||
+      ev.action === "mute_author"
+    ) {
+      negative += 1;
+    }
+  }
+  return positiveOrKept >= 2 && negative === 0;
+}
+
+function isShortMediaCaption(post: PostCandidate): boolean {
+  return Boolean(post.hasMedia && !post.isPromoted && post.text.trim().length < 180);
+}
+
 export class TasteJudgeScorer implements PostScorer {
   readonly id = "taste-judge";
 
-  score(_post: PostCandidate, ctx: ScoringContext): ScorerResult {
+  score(post: PostCandidate, ctx: ScoringContext): ScorerResult {
     if (!ctx.profile.tasteProfile?.aiJudgeEnabled || !ctx.judgeVerdict) {
       return EMPTY_RESULT;
     }
@@ -204,7 +228,17 @@ export class TasteJudgeScorer implements PostScorer {
       };
     }
     const mult = ctx.profile.learnedModel?.scorerWeights?.tasteJudge ?? 1.0;
-    const delta = Number((verdictToScoreDelta(verdict) * mult).toFixed(2));
+    let delta = Number((verdictToScoreDelta(verdict) * mult).toFixed(2));
+    // Never let a text-only AI judge auto-collapse posts with attached charts/media or from trusted authors
+    if (delta < 0) {
+      if (isTrustedAuthor(post.authorHandle, ctx)) {
+        return EMPTY_RESULT;
+      }
+      if (isShortMediaCaption(post)) {
+        delta = Math.max(-0.5, delta);
+        if (Math.abs(delta) < 0.35) return EMPTY_RESULT;
+      }
+    }
     const labelMap: Record<string, string> = {
       insight: "Insight",
       counterpoint: "Counterpoint",
@@ -242,7 +276,10 @@ export class LearnedModelScorer implements PostScorer {
 
     const mult = params.scorerWeights?.learnedModel ?? 1.0;
     const { delta: rawDelta, topFeatures } = scoreWithLearnedModel(post, params);
-    const delta = Number((rawDelta * mult).toFixed(2));
+    let delta = Number((rawDelta * mult).toFixed(2));
+    if (delta < 0 && (isTrustedAuthor(post.authorHandle, ctx) || isShortMediaCaption(post))) {
+      return EMPTY_RESULT;
+    }
     if (Math.abs(delta) < 0.35) return EMPTY_RESULT;
 
     return {

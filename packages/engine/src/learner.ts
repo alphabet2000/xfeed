@@ -325,9 +325,10 @@ export function scoreWithLearnedModel(
   }
   if (matched.length === 0) return { delta: 0, topFeatures: [] };
 
-  // Convert linear sum into bounded score delta (-3.5 .. +3.5)
-  const scaled = Math.tanh((raw + params.bias * 0.25) * 0.9) * 3.5;
-  const delta = Number(scaled.toFixed(2));
+  // Convert linear sum into bounded score delta (precision-first: gentle tie-breaker [-1.5, +2.0]
+  // so sparse bag-of-words neither solo-collapses normal posts nor cancels out blatant spam verdicts)
+  const scaled = Math.tanh((raw + params.bias * 0.25) * 0.9) * 2.5;
+  const delta = Number(Math.max(-1.5, Math.min(2.0, scaled)).toFixed(2));
   if (Math.abs(delta) < 0.35) {
     return { delta: 0, topFeatures: [] };
   }

@@ -49,7 +49,8 @@ const MAX_BODY_BYTES = 512 * 1024;
 const MAX_FEEDBACK_BATCH = 200;
 const MAX_FEEDBACK_RETURN = 1000;
 const MAX_JUDGE_BATCH = 12;
-const WORKERS_AI_JUDGE_MODEL = "@cf/meta/llama-3.2-3b-instruct";
+const WORKERS_AI_JUDGE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const WORKERS_AI_JUDGE_FALLBACK_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
 const WORKERS_AI_EMBED_MODEL = "@cf/baai/bge-small-en-v1.5";
 
 function corsHeaders(request: Request): Record<string, string> {
@@ -504,17 +505,25 @@ async function judgeBatchWithWorkersAi(
   posts: PostCandidate[],
   profile: TuningProfile,
   feedbackHistory: FeedbackEvent[],
+  postEmbeddings: Array<number[] | null> = [],
 ): Promise<JudgeVerdict[] | null> {
   if (!env.AI) return null;
 
   const systemPrompt = buildJudgeSystemPrompt(profile);
-  const items = posts.map((post) => {
-    const similar = retrieveSimilarExamples(post, feedbackHistory, 3);
+  const items = posts.map((post, idx) => {
+    const similar = retrieveSimilarExamples(
+      post,
+      feedbackHistory,
+      3,
+      postEmbeddings[idx] ?? undefined,
+    );
     return {
       postId: post.id,
       author: `@${post.authorHandle}`,
       text: post.text.slice(0, 420),
       quotedText: post.quotedText ? post.quotedText.slice(0, 240) : undefined,
+      hasMedia: Boolean(post.hasMedia),
+      hasVideo: Boolean(post.hasVideo),
       isRepost: post.isRepost,
       isPromoted: post.isPromoted,
       similarUserRatings: similar.map((ex) => ({
@@ -525,18 +534,26 @@ async function judgeBatchWithWorkersAi(
     };
   });
 
-  try {
-    const aiResp = await env.AI.run(WORKERS_AI_JUDGE_MODEL, {
+  const runModel = async (model: string) =>
+    env.AI!.run(model, {
       messages: [
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Judge these ${items.length} posts using the user's Feed Philosophy and similarUserRatings:\n${JSON.stringify(items)}`,
+          content: `Judge these ${items.length} posts using the user's Feed Philosophy and similarUserRatings (remember: default to allowing posts; never penalize short captions when hasMedia is true):\n${JSON.stringify(items)}`,
         },
       ],
-      max_tokens: 700,
+      max_tokens: 750,
       temperature: 0.1,
     });
+
+  try {
+    let aiResp: Record<string, unknown>;
+    try {
+      aiResp = await runModel(WORKERS_AI_JUDGE_MODEL);
+    } catch {
+      aiResp = await runModel(WORKERS_AI_JUDGE_FALLBACK_MODEL);
+    }
 
     const text =
       typeof aiResp.response === "string"
@@ -558,6 +575,7 @@ async function judgeBatchWithWorkersAi(
       "farming",
       "rage_bait",
       "promo",
+      "low_fit",
       "neutral",
     ]);
 
@@ -680,9 +698,13 @@ async function handleJudgePosts(
         continue;
       }
 
-      if (emb && embeddingHead && embeddingHead.trainedOnCount >= 12) {
+      // Precision-first embedding fast-path: only skip the 70B LLM for high-confidence positive matches
+      // (or extreme negative matches on non-media posts with >=30 ratings); escalate uncertain cases to LLM.
+      if (emb && embeddingHead && embeddingHead.trainedOnCount >= 30) {
         const pred = scoreEmbeddingWithHead(emb, embeddingHead);
-        if (pred && pred.confidence >= 0.58) {
+        const allowFastPositive = Boolean(pred && pred.prob >= 0.80);
+        const allowFastNegative = Boolean(pred && pred.prob <= 0.06 && !post.hasMedia);
+        if (pred && (allowFastPositive || allowFastNegative)) {
           const isPositive = pred.prob >= 0.5;
           fastVerdicts.set(post.id, {
             postId: post.id,
@@ -706,7 +728,13 @@ async function handleJudgePosts(
     const escalatedVerdicts =
       escalatePosts.length === 0
         ? []
-        : (await judgeBatchWithWorkersAi(env, escalatePosts, profile, mergedHistory)) ??
+        : (await judgeBatchWithWorkersAi(
+            env,
+            escalatePosts,
+            profile,
+            mergedHistory,
+            escalateEmbeddings,
+          )) ??
           escalatePosts.map((p, idx) =>
             evaluateWithLocalRubric(
               p,

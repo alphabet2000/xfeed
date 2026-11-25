@@ -138,8 +138,8 @@ export function createDefaultProfile(nowIso: string = new Date().toISOString()):
       hideShortPostsBelow: 0,
     },
     thresholds: {
-      hideBelow: -5,
-      collapseBelow: -1.5,
+      hideBelow: -6,
+      collapseBelow: -3.5,
       boostAbove: 2.5,
     },
     uiOptions: {
@@ -150,7 +150,7 @@ export function createDefaultProfile(nowIso: string = new Date().toISOString()):
       observeNativeXFeedback: true,
       hideRightSidebar: true,
       wideTimeline: true,
-      dedupeRepeatedStories: true,
+      dedupeRepeatedStories: false,
     },
     tasteProfile: createDefaultTasteProfile(),
     learnedModel: createDefaultLearnedModel(nowIso),

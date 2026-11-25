@@ -58,8 +58,8 @@ data class ContentFilters(
 }
 
 data class Thresholds(
-    val hideBelow: Double = -5.0,
-    val collapseBelow: Double = -1.5,
+    val hideBelow: Double = -6.0,
+    val collapseBelow: Double = -3.5,
     val boostAbove: Double = 2.5
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -70,8 +70,8 @@ data class Thresholds(
 
     companion object {
         fun fromJson(obj: JSONObject?): Thresholds = if (obj == null) Thresholds() else Thresholds(
-            hideBelow = obj.optDouble("hideBelow", -5.0),
-            collapseBelow = obj.optDouble("collapseBelow", -1.5),
+            hideBelow = obj.optDouble("hideBelow", -6.0),
+            collapseBelow = obj.optDouble("collapseBelow", -3.5),
             boostAbove = obj.optDouble("boostAbove", 2.5)
         )
     }
@@ -85,7 +85,7 @@ data class UiOptions(
     val observeNativeXFeedback: Boolean = true,
     val hideRightSidebar: Boolean = true,
     val wideTimeline: Boolean = true,
-    val dedupeRepeatedStories: Boolean = true
+    val dedupeRepeatedStories: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("enabled", enabled)
@@ -107,7 +107,7 @@ data class UiOptions(
             observeNativeXFeedback = obj.optBoolean("observeNativeXFeedback", true),
             hideRightSidebar = obj.optBoolean("hideRightSidebar", true),
             wideTimeline = obj.optBoolean("wideTimeline", true),
-            dedupeRepeatedStories = obj.optBoolean("dedupeRepeatedStories", true)
+            dedupeRepeatedStories = obj.optBoolean("dedupeRepeatedStories", false)
         )
     }
 }

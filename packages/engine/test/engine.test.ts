@@ -112,7 +112,7 @@ test("feedback updates author weights, remembers dismissed post, and learns over
   const samePostDecision = engine.evaluate(post1, profile, history, now + 1000);
   assert.equal(samePostDecision.action, "collapse");
 
-  // Second similar post from same author gets combined author weight + term overlap penalty
+  // Second similar post from same author gets combined negative author weight + term overlap penalty
   const post2 = makePost({
     id: "2002",
     authorHandle: "noisebot",
@@ -120,8 +120,9 @@ test("feedback updates author weights, remembers dismissed post, and learns over
     hashtags: ["drama"],
   });
   const similarDecision = engine.evaluate(post2, profile, history, now + 2000);
-  assert.ok(similarDecision.score <= profile.thresholds.collapseBelow);
-  assert.equal(similarDecision.action, "collapse");
+  assert.ok(similarDecision.score <= -2.0);
+  assert.ok(similarDecision.reasons.some((r) => r.scorerId === "author-weights"));
+  assert.ok(similarDecision.reasons.some((r) => r.scorerId === "learned-model"));
 });
 
 test("pluggable async scorer extends evaluateAsync without changing core engine", async () => {
@@ -336,7 +337,11 @@ test("Seen 24h snoozes repeated breaking stories temporarily without poisoning l
       seenAt: now,
     },
   ];
-  const autoDedupe = engine.evaluate(nvda2, createDefaultProfile(), [], now + 60_000, undefined, seenBuffer);
+  const dedupeProfile = {
+    ...createDefaultProfile(),
+    uiOptions: { ...createDefaultProfile().uiOptions, dedupeRepeatedStories: true },
+  };
+  const autoDedupe = engine.evaluate(nvda2, dedupeProfile, [], now + 60_000, undefined, seenBuffer);
   assert.equal(autoDedupe.action, "collapse");
   const dedupeReason = autoDedupe.reasons.find((r) => r.scorerId === "story-novelty")?.message ?? "";
   assert.match(dedupeReason, /nvidia/i);
@@ -344,7 +349,7 @@ test("Seen 24h snoozes repeated breaking stories temporarily without poisoning l
 
   const counterpoint = engine.evaluate(
     nvda2,
-    createDefaultProfile(),
+    dedupeProfile,
     [],
     now + 60_000,
     {
@@ -474,4 +479,82 @@ test("Seen 24h respects Hard Hide mode on clicked, similar, and semantically sno
     }).action,
     "hide",
   );
+});
+
+test("Precision-first guards protect uncertain posts, short chart/media posts, and trusted authors while collapsing blatant spam", () => {
+  const engine = new CustomizationEngine();
+  let profile = createDefaultProfile();
+  let history = [] as ReturnType<CustomizationEngine["applyFeedback"]>["feedbackHistory"];
+  const now = Date.now();
+
+  // 1. Uncertain / moderate AI verdict must never collapse a normal post
+  const normalPost = makePost({ id: "pf-1", authorHandle: "some_user", text: "Interesting market move today across bonds and equities." });
+  const mildNeg = engine.evaluate(normalPost, profile, history, now, {
+    postId: normalPost.id,
+    worthwhile: 2.5,
+    farming: 6.0,
+    category: "low_fit",
+    reason: "Mild uncertainty",
+    similarExampleIds: [],
+    source: "workers-ai",
+    evaluatedAt: new Date(now).toISOString(),
+  });
+  assert.equal(mildNeg.action, "show");
+
+  // 2. Short caption with attached chart/media must not be auto-collapsed by text-only AI
+  const chartPost = makePost({ id: "pf-2", authorHandle: "new_chartist", text: "$dxy is sell below", hasMedia: true });
+  const chartEval = engine.evaluate(chartPost, profile, history, now, {
+    postId: chartPost.id,
+    worthwhile: 1.0,
+    farming: 9.0,
+    category: "farming",
+    reason: "Short cryptic ticker caption",
+    similarExampleIds: [],
+    source: "workers-ai",
+    evaluatedAt: new Date(now).toISOString(),
+  });
+  assert.equal(chartEval.action, "show");
+
+  // 3. Trusted author (2+ upvotes or Keep rescues) must not be auto-collapsed by AI
+  for (const id of ["pf-t1", "pf-t2"]) {
+    const res = engine.applyFeedback(profile, history, {
+      post: makePost({ id, authorHandle: "swingtrader", text: "Chart level test" }),
+      action: "false_positive",
+      sourceClient: "extension",
+      now,
+    });
+    profile = res.profile;
+    history = res.feedbackHistory;
+  }
+  const trustedPost = makePost({ id: "pf-3", authorHandle: "swingtrader", text: "Longer text post from trusted author without media that AI misjudges." });
+  const trustedEval = engine.evaluate(trustedPost, profile, history, now, {
+    postId: trustedPost.id,
+    worthwhile: 1.0,
+    farming: 9.0,
+    category: "rage_bait",
+    reason: "Misread tone",
+    similarExampleIds: [],
+    source: "workers-ai",
+    evaluatedAt: new Date(now).toISOString(),
+  });
+  assert.equal(trustedEval.action, "show");
+
+  // 4. Blatant non-media rage-bait / farming from untrusted author DOES collapse
+  const spamPost = makePost({
+    id: "pf-4",
+    authorHandle: "grifter",
+    text: "UNPOPULAR OPINION: 99% of people are lazy sheep. Agree? 👇🔥",
+    hashtags: [],
+  });
+  const spamEval = engine.evaluate(spamPost, profile, history, now, {
+    postId: spamPost.id,
+    worthwhile: 2.0,
+    farming: 8.5,
+    category: "rage_bait",
+    reason: "Blatant rage-bait",
+    similarExampleIds: [],
+    source: "workers-ai",
+    evaluatedAt: new Date(now).toISOString(),
+  });
+  assert.equal(spamEval.action, "collapse");
 });

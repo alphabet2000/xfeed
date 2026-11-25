@@ -240,7 +240,7 @@ export class CustomizationEngine {
         }
         break;
       case "less_author":
-        nextWeights[handle] = Number(Math.max(-10, currentWeight - 3.5).toFixed(2));
+        nextWeights[handle] = Number(Math.max(-10, currentWeight - 5.5).toFixed(2));
         break;
       case "not_interested":
         nextWeights[handle] = Number(Math.max(-10, currentWeight - 1.2).toFixed(2));
