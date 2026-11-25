@@ -228,7 +228,7 @@ export interface Decision {
 export interface ScorerResult {
   delta: number;
   reasons: DecisionReason[];
-  hardAction?: "hide" | "collapse" | "show" | "boost";
+  hardAction?: "hide" | "collapse" | "collapse_reversible" | "show" | "boost";
 }
 
 export interface ScoringContext {

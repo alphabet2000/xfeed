@@ -553,6 +553,29 @@ export function applyDecisionToArticle(
     const actions = document.createElement("span");
     actions.className = "xfeed-stub-actions";
 
+    const stubActiveAction = options?.activeAction ?? null;
+    const canUndoFromStub =
+      stubActiveAction === "downvote" ||
+      stubActiveAction === "farming" ||
+      stubActiveAction === "not_interested" ||
+      stubActiveAction === "less_like_this" ||
+      stubActiveAction === "seen_story" ||
+      stubActiveAction === "less_author" ||
+      stubActiveAction === "mute_author";
+
+    if (canUndoFromStub) {
+      const undoBtn = document.createElement("button");
+      undoBtn.type = "button";
+      undoBtn.textContent = "Undo";
+      undoBtn.title = "Revert your decision and restore this post";
+      undoBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        callbacks.onFeedback(post, "undo", article);
+      });
+      actions.append(undoBtn);
+    }
+
     const showBtn = document.createElement("button");
     showBtn.type = "button";
     showBtn.textContent = "Show";

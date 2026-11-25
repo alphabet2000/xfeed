@@ -43,6 +43,8 @@ function resolveDecision(
 
   if (hardAction === "show") {
     action = "show";
+  } else if (hardAction === "collapse_reversible") {
+    action = "collapse";
   } else if (hardAction === "hide" || hardAction === "collapse") {
     action = profile.uiOptions.displayMode === "hide" ? "hide" : "collapse";
   } else if (hardAction === "boost") {
@@ -124,7 +126,13 @@ export class CustomizationEngine {
       }
       if (result.hardAction === "show") {
         hardAction = "show";
-      } else if (result.hardAction === "hide" && hardAction !== "show") {
+      } else if (result.hardAction === "collapse_reversible" && hardAction !== "show") {
+        hardAction = "collapse_reversible";
+      } else if (
+        result.hardAction === "hide" &&
+        hardAction !== "show" &&
+        hardAction !== "collapse_reversible"
+      ) {
         hardAction = "hide";
       } else if (result.hardAction && !hardAction) {
         hardAction = result.hardAction;
@@ -166,7 +174,13 @@ export class CustomizationEngine {
       }
       if (result.hardAction === "show") {
         hardAction = "show";
-      } else if (result.hardAction === "hide" && hardAction !== "show") {
+      } else if (result.hardAction === "collapse_reversible" && hardAction !== "show") {
+        hardAction = "collapse_reversible";
+      } else if (
+        result.hardAction === "hide" &&
+        hardAction !== "show" &&
+        hardAction !== "collapse_reversible"
+      ) {
         hardAction = "hide";
       } else if (result.hardAction && !hardAction) {
         hardAction = result.hardAction;

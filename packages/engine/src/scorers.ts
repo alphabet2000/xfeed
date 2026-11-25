@@ -342,9 +342,11 @@ export class FeedbackMemoryScorer implements PostScorer {
                 : event.action === "seen_story"
                   ? `Snoozed 24h${snoozeTopic}`
                   : "Downvoted by you";
+          const isReversibleDownvote =
+            event.action === "downvote" || event.action === "farming";
           return {
             delta: -10,
-            hardAction: "hide",
+            hardAction: isReversibleDownvote ? "collapse_reversible" : "hide",
             reasons: [
               {
                 scorerId: this.id,

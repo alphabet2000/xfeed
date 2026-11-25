@@ -385,9 +385,11 @@ export class XFeedController {
     reasonTag?: string,
   ): Promise<void> {
     let syncedToX = alreadySyncedToX;
+    // Never trigger X's destructive native "Not interested" menu on xfeed "downvote",
+    // because X deletes the tweet DOM node and prevents collapsing + reverting with Undo.
     if (
       !alreadySyncedToX &&
-      (action === "downvote" || action === "farming" || action === "not_interested") &&
+      action === "not_interested" &&
       article &&
       this.profile.uiOptions.forwardNotInterestedToX
     ) {

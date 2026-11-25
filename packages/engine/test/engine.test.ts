@@ -607,4 +607,15 @@ test("Undo reverts upvote, downvote, Seen 24h snooze, and Less @author cleanly",
   history = res.feedbackHistory;
   assert.equal(profile.authorWeights["loud_acc"], undefined);
   assert.equal(engine.evaluate(post3, profile, history, now + 10000).action, "show");
+
+  // 5. Downvote always collapses reversibly (never hard-hides without an Undo stub) even in hide mode
+  const hideProfile = {
+    ...profile,
+    uiOptions: { ...profile.uiOptions, displayMode: "hide" as const },
+  };
+  const post4 = makePost({ id: "undo-4", authorHandle: "some_acct", text: "Annoying post", hashtags: [] });
+  res = engine.applyFeedback(hideProfile, history, { post: post4, action: "downvote", sourceClient: "extension", now: now + 11000 });
+  assert.equal(engine.evaluate(post4, res.profile, res.feedbackHistory, now + 12000).action, "collapse");
+  const reverted = engine.applyFeedback(res.profile, res.feedbackHistory, { post: post4, action: "undo", sourceClient: "extension", now: now + 13000 });
+  assert.equal(engine.evaluate(post4, reverted.profile, reverted.feedbackHistory, now + 14000).action, "show");
 });
