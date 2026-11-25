@@ -233,6 +233,10 @@ export function injectStyles(): void {
       line-height: 1.35;
       white-space: nowrap;
       flex-shrink: 0;
+      transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+    }
+    .xfeed-btn:active {
+      transform: scale(0.94);
     }
     .xfeed-btn:hover {
       background: rgba(29, 155, 240, 0.18);
@@ -245,6 +249,24 @@ export function injectStyles(): void {
     .xfeed-btn-neg:hover {
       background: rgba(244, 33, 46, 0.18);
       border-color: rgba(244, 33, 46, 0.45);
+    }
+    .xfeed-btn-active-pos {
+      background: rgba(0, 186, 124, 0.28) !important;
+      border-color: #00ba7c !important;
+      color: #00e699 !important;
+      font-weight: 700 !important;
+    }
+    .xfeed-btn-active-neg {
+      background: rgba(244, 33, 46, 0.28) !important;
+      border-color: #f4212e !important;
+      color: #ff6b74 !important;
+      font-weight: 700 !important;
+    }
+    .xfeed-btn-active-blue {
+      background: rgba(29, 155, 240, 0.28) !important;
+      border-color: #1d9bf0 !important;
+      color: #70c4ff !important;
+      font-weight: 700 !important;
     }
     .xfeed-score-pill {
       margin-left: auto;
@@ -436,6 +458,7 @@ export interface RenderCallbacks {
 export interface RenderArticleOptions {
   threadCount?: number;
   hideAsThreadCompanion?: boolean;
+  activeAction?: FeedbackAction | null;
 }
 
 export function applyDecisionToArticle(
@@ -539,7 +562,7 @@ export function applyDecisionToArticle(
       e.stopPropagation();
       callbacks.onExpand(post.id);
       if (!options?.threadCount || options.threadCount <= 1) {
-        applyDecisionToArticle(article, post, decision, profile, callbacks, true);
+        applyDecisionToArticle(article, post, decision, profile, callbacks, true, options);
       }
     });
 
@@ -554,6 +577,20 @@ export function applyDecisionToArticle(
   const bar = document.createElement("div");
   bar.className = "xfeed-action-bar";
 
+  const activeAction = options?.activeAction ?? null;
+  const isDownvoted =
+    activeAction === "downvote" ||
+    activeAction === "farming" ||
+    activeAction === "not_interested" ||
+    activeAction === "less_like_this";
+  const isUpvoted =
+    activeAction === "upvote" ||
+    activeAction === "good_post" ||
+    activeAction === "more_like_this";
+  const isSnoozed = activeAction === "seen_story";
+  const isLessAuthor = activeAction === "less_author" || activeAction === "mute_author";
+  const isKept = activeAction === "false_positive";
+
   const makeBtn = (
     icon: string,
     label: string,
@@ -562,11 +599,13 @@ export function applyDecisionToArticle(
     extraClass: string = "",
     reasonTag?: string,
     longSuffix?: string,
+    active: boolean = false,
   ) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `xfeed-btn ${extraClass}`.trim();
     btn.setAttribute("aria-label", longSuffix ? `${label} ${longSuffix}` : label);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
     btn.title = title;
 
     const icoSpan = document.createElement("span");
@@ -594,47 +633,63 @@ export function applyDecisionToArticle(
     return btn;
   };
 
-  if (userExpanded && (decision.action === "collapse" || decision.action === "hide")) {
+  if (isKept || (userExpanded && (decision.action === "collapse" || decision.action === "hide"))) {
     bar.append(
       makeBtn(
-        "✓",
-        "Keep",
-        "Not an upvote — tells xfeed this post should not have been filtered",
+        isKept ? "✓✓" : "✓",
+        isKept ? "Kept" : "Keep",
+        isKept
+          ? "Marked as Keep (wrong filter)"
+          : "Not an upvote — tells xfeed this post should not have been filtered",
         "false_positive",
-        "xfeed-btn-keep-bar",
+        isKept ? "xfeed-btn-keep-bar xfeed-btn-active-pos" : "xfeed-btn-keep-bar",
         "wrong_filter",
-        "(Wrong filter)",
+        isKept ? undefined : "(Wrong filter)",
+        isKept,
       ),
     );
   }
 
   bar.append(
     makeBtn(
-      "👎",
-      "Downvote",
+      isDownvoted ? "👎✓" : "👎",
+      isDownvoted ? "Downvoted" : "Downvote",
       "Downvote this post for long-term taste (farming, tone, off-taste — stays post-level without penalizing this author)",
       "downvote",
-      "xfeed-btn-neg",
+      isDownvoted ? "xfeed-btn-neg xfeed-btn-active-neg" : "xfeed-btn-neg",
+      undefined,
+      undefined,
+      isDownvoted,
     ),
     makeBtn(
-      "👍",
-      "Upvote",
+      isUpvoted ? "👍✓" : "👍",
+      isUpvoted ? "Upvoted" : "Upvote",
       "Upvote this post (informative, counterpoint, casual, etc.)",
       "upvote",
-      "xfeed-btn-pos",
+      isUpvoted ? "xfeed-btn-pos xfeed-btn-active-pos" : "xfeed-btn-pos",
+      undefined,
+      undefined,
+      isUpvoted,
     ),
     makeBtn(
-      "🔁",
-      "Seen 24h",
+      isSnoozed ? "🔁✓" : "🔁",
+      isSnoozed ? "Snoozed 24h" : "Seen 24h",
       "Already saw this story — snooze similar posts for 24h without affecting your long-term taste model",
       "seen_story",
+      isSnoozed ? "xfeed-btn-active-blue" : "",
+      undefined,
+      undefined,
+      isSnoozed,
     ),
     makeBtn(
-      "🔇",
-      "Less @author",
+      isLessAuthor ? "🔇✓" : "🔇",
+      isLessAuthor ? "Less @author" : "Less @author",
       "Show less from this author overall",
       "less_author",
-      "xfeed-btn-neg",
+      isLessAuthor ? "xfeed-btn-neg xfeed-btn-active-neg" : "xfeed-btn-neg",
+      undefined,
+      undefined,
+      isLessAuthor,
     ),
   );
 

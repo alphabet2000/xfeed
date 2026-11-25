@@ -566,6 +566,14 @@ export class XFeedController {
       }
     }
 
+    // Track most recent feedback action per postId so clicked buttons stay visually highlighted
+    const latestActionByPostId = new Map<string, FeedbackAction>();
+    for (const ev of this.feedbackHistory) {
+      if (!latestActionByPostId.has(ev.postId)) {
+        latestActionByPostId.set(ev.postId, ev.action);
+      }
+    }
+
     // Track filtered thread spans per container so middle "..." connectors and "Show this thread" footers also hide
     const filteredThreadSpans: Array<{
       container: HTMLElement;
@@ -654,7 +662,8 @@ export class XFeedController {
             : decision.action;
         this.evaluatedPostActions.set(post.id, effectiveAction);
 
-        const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${effectiveExpanded ? "e" : "n"}:${groupStamp}`;
+        const activeAction = latestActionByPostId.get(post.id) ?? null;
+        const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${effectiveExpanded ? "e" : "n"}:${activeAction ?? ""}:${groupStamp}`;
         const expected = article.dataset.xfeedExpected;
         const domIntact =
           article.dataset.xfeedRev === renderStamp &&
@@ -717,6 +726,7 @@ export class XFeedController {
             {
               threadCount: group.length > 1 ? group.length : undefined,
               hideAsThreadCompanion: isCompanionHidden,
+              activeAction,
             },
           );
         }
