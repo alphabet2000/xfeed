@@ -20,7 +20,7 @@ export function injectStyles(): void {
     }
     @media (min-width: 700px) {
       body.xfeed-wide-timeline header[role="banner"] {
-        flex-grow: 0.25 !important;
+        flex-grow: 0.45 !important;
       }
       body.xfeed-wide-timeline main[role="main"] {
         flex-grow: 1 !important;
@@ -28,7 +28,7 @@ export function injectStyles(): void {
       }
       body.xfeed-wide-timeline main[role="main"] > div {
         width: 100% !important;
-        max-width: 960px !important;
+        max-width: 780px !important;
         flex: 1 1 auto !important;
       }
       body.xfeed-wide-timeline main[role="main"] > div > div {
@@ -37,7 +37,7 @@ export function injectStyles(): void {
         justify-content: flex-start !important;
       }
       body.xfeed-wide-timeline [data-testid="primaryColumn"] {
-        max-width: 900px !important;
+        max-width: 740px !important;
         width: 100% !important;
         flex: 1 1 auto !important;
       }
