@@ -151,6 +151,7 @@ export type FeedbackAction =
   | "less_author"
   | "mute_author"
   | "boost_author"
+  | "undo"
   // Legacy aliases preserved for backward compatibility with stored events
   | "farming"
   | "good_post"

@@ -4,6 +4,7 @@ import {
   distillTasteRulesLocally,
   ensureProfileDefaults,
   evaluateWithLocalRubric,
+  getEffectiveFeedbackHistory,
   isNegativeFeedbackAction,
   isPositiveFeedbackAction,
   matchStorySnooze,
@@ -779,7 +780,7 @@ async function runReflectionDistillation(
   profile: TuningProfile,
   history: FeedbackEvent[],
 ): Promise<{ learnedRules: string[]; source: string }> {
-  const usable = history
+  const usable = getEffectiveFeedbackHistory(history)
     .filter((e) => isPositiveFeedbackAction(e.action) || isNegativeFeedbackAction(e.action))
     .slice(0, 60);
 

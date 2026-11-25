@@ -606,7 +606,7 @@ export function applyDecisionToArticle(
     btn.className = `xfeed-btn ${extraClass}`.trim();
     btn.setAttribute("aria-label", longSuffix ? `${label} ${longSuffix}` : label);
     btn.setAttribute("aria-pressed", active ? "true" : "false");
-    btn.title = title;
+    btn.title = active ? `${title} (click again to undo)` : title;
 
     const icoSpan = document.createElement("span");
     icoSpan.className = "xfeed-btn-ico";
@@ -628,7 +628,12 @@ export function applyDecisionToArticle(
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      callbacks.onFeedback(post, action, article, reasonTag);
+      callbacks.onFeedback(
+        post,
+        active ? "undo" : action,
+        article,
+        active ? undefined : reasonTag,
+      );
     });
     return btn;
   };

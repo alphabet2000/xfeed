@@ -662,7 +662,8 @@ export class XFeedController {
             : decision.action;
         this.evaluatedPostActions.set(post.id, effectiveAction);
 
-        const activeAction = latestActionByPostId.get(post.id) ?? null;
+        const latestAction = latestActionByPostId.get(post.id) ?? null;
+        const activeAction = latestAction === "undo" ? null : latestAction;
         const renderStamp = `${revKey}:${post.id}:${verdict ? "j" : "s"}:${effectiveExpanded ? "e" : "n"}:${activeAction ?? ""}:${groupStamp}`;
         const expected = article.dataset.xfeedExpected;
         const domIntact =

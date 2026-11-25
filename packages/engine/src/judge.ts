@@ -1,6 +1,7 @@
 import { extractTerms, normalizeHandle } from "./defaults.ts";
 import {
   cosineSimilarity,
+  getEffectiveFeedbackHistory,
   isNegativeFeedbackAction,
   isPositiveFeedbackAction,
 } from "./learner.ts";
@@ -75,12 +76,13 @@ export function retrieveSimilarExamples(
   maxExamples: number = 4,
   postEmbedding?: number[],
 ): FeedbackEvent[] {
+  const effectiveHistory = getEffectiveFeedbackHistory(feedbackHistory);
   const postTerms = new Set(
     extractTerms(`${post.text} ${post.quotedText ?? ""}`, post.hashtags),
   );
   const postHandle = normalizeHandle(post.authorHandle);
 
-  const scored = feedbackHistory
+  const scored = effectiveHistory
     .filter(
       (ev) =>
         ev.postId !== post.id &&
@@ -118,13 +120,13 @@ export function retrieveSimilarExamples(
   const hasPos = picked.some((e) => isPositiveFeedbackAction(e.action));
   const hasNeg = picked.some((e) => isNegativeFeedbackAction(e.action));
   if (!hasPos) {
-    const pos = feedbackHistory.find(
+    const pos = effectiveHistory.find(
       (e) => !usedIds.has(e.id) && isPositiveFeedbackAction(e.action),
     );
     if (pos) picked.push(pos);
   }
   if (!hasNeg) {
-    const neg = feedbackHistory.find(
+    const neg = effectiveHistory.find(
       (e) => !usedIds.has(e.id) && isNegativeFeedbackAction(e.action),
     );
     if (neg) picked.push(neg);
@@ -267,9 +269,10 @@ export function distillTasteRulesLocally(
   existingRules: string[] = [],
 ): string[] {
   const rules = new Set<string>(existingRules);
-  const negativeEvents = feedbackHistory.filter((e) => isNegativeFeedbackAction(e.action));
-  const positiveEvents = feedbackHistory.filter((e) => isPositiveFeedbackAction(e.action));
-  const corrections = feedbackHistory.filter((e) => e.action === "false_positive");
+  const effective = getEffectiveFeedbackHistory(feedbackHistory);
+  const negativeEvents = effective.filter((e) => isNegativeFeedbackAction(e.action));
+  const positiveEvents = effective.filter((e) => isPositiveFeedbackAction(e.action));
+  const corrections = effective.filter((e) => e.action === "false_positive");
 
   if (negativeEvents.length > 0) {
     if (negativeEvents.some((e) => /\?|agree|thoughts|unpopular opinion|hot take/i.test(e.postSnippet ?? ""))) {

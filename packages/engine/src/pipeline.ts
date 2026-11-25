@@ -257,6 +257,30 @@ export class CustomizationEngine {
       case "boost_author":
         nextWeights[handle] = Number(Math.min(10, Math.max(3, currentWeight + 2.5)).toFixed(2));
         break;
+      case "undo": {
+        const prev = feedbackHistory.find((ev) => ev.postId === input.post.id);
+        // Remove any 24h story snooze created for this post
+        nextSnoozes = nextSnoozes.filter((s) => s.postId !== input.post.id);
+        const setOrDeleteWeight = (val: number) => {
+          const rounded = Number(val.toFixed(2));
+          if (Math.abs(rounded) < 0.05) delete nextWeights[handle];
+          else nextWeights[handle] = rounded;
+        };
+        if (prev?.action === "less_author") {
+          setOrDeleteWeight(Math.min(0, currentWeight + 5.5));
+        } else if (prev?.action === "mute_author") {
+          delete nextWeights[handle];
+        } else if (prev?.action === "not_interested") {
+          setOrDeleteWeight(Math.min(0, currentWeight + 1.2));
+        } else if (prev?.action === "less_like_this") {
+          setOrDeleteWeight(Math.min(0, currentWeight + 0.8));
+        } else if (prev?.action === "more_like_this") {
+          setOrDeleteWeight(Math.max(0, currentWeight - 1.0));
+        } else if (prev?.action === "boost_author") {
+          setOrDeleteWeight(Math.max(0, currentWeight - 2.5));
+        }
+        break;
+      }
     }
 
     const nextHistory = [event, ...feedbackHistory].slice(0, MAX_FEEDBACK_HISTORY);

@@ -29,6 +29,24 @@ export function isNegativeFeedbackAction(action: FeedbackEvent["action"]): boole
 }
 
 /**
+ * Collapses the append-only multi-device feedback log to the latest effective event per postId.
+ * Posts whose latest action is "undo" are excluded so reverting a click cleanly un-learns it everywhere.
+ */
+export function getEffectiveFeedbackHistory(
+  feedbackHistory: FeedbackEvent[],
+): FeedbackEvent[] {
+  const seen = new Set<string>();
+  const effective: FeedbackEvent[] = [];
+  for (const ev of feedbackHistory) {
+    if (seen.has(ev.postId)) continue;
+    seen.add(ev.postId);
+    if (ev.action === "undo") continue;
+    effective.push(ev);
+  }
+  return effective;
+}
+
+/**
  * Extracts normalized sparse features from a post (terms + style signals).
  * Never adds length penalties against short or casual posts.
  */
@@ -71,7 +89,8 @@ export function trainModelFromFeedback(
   const base = createDefaultLearnedModel(new Date(now).toISOString());
   const scorerWeights = existingScorerWeights ?? base.scorerWeights;
 
-  const labeled = feedbackHistory
+  const effectiveHistory = getEffectiveFeedbackHistory(feedbackHistory);
+  const labeled = effectiveHistory
     .filter(
       (ev) =>
         (isPositiveFeedbackAction(ev.action) || isNegativeFeedbackAction(ev.action)) &&
@@ -202,7 +221,7 @@ export function trainEmbeddingHead(
   const lambda = options.lambda ?? 0.04;
   const modelId = options.modelId ?? "@cf/baai/bge-small-en-v1.5";
 
-  const embedded = feedbackHistory
+  const embedded = getEffectiveFeedbackHistory(feedbackHistory)
     .filter(
       (ev) =>
         (isPositiveFeedbackAction(ev.action) || isNegativeFeedbackAction(ev.action)) &&

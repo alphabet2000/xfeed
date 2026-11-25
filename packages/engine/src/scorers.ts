@@ -1,6 +1,7 @@
 import { normalizeHandle } from "./defaults.ts";
 import { verdictToScoreDelta } from "./judge.ts";
 import {
+  getEffectiveFeedbackHistory,
   isNegativeFeedbackAction,
   isPositiveFeedbackAction,
   scoreWithLearnedModel,
@@ -188,7 +189,7 @@ function isTrustedAuthor(handle: string, ctx: ScoringContext): boolean {
   if ((ctx.profile.authorWeights[norm] ?? 0) < 0) return false;
   let positiveOrKept = 0;
   let negative = 0;
-  for (const ev of ctx.feedbackHistory) {
+  for (const ev of getEffectiveFeedbackHistory(ctx.feedbackHistory)) {
     if (normalizeHandle(ev.authorHandle) !== norm) continue;
     if (isPositiveFeedbackAction(ev.action)) positiveOrKept += 1;
     else if (
@@ -307,6 +308,9 @@ export class FeedbackMemoryScorer implements PostScorer {
     // Direct post feedback match (most recent event wins for this post)
     for (const event of ctx.feedbackHistory) {
       if (event.postId === post.id) {
+        if (event.action === "undo") {
+          return EMPTY_RESULT;
+        }
         if (event.action === "false_positive") {
           return {
             delta: 0,

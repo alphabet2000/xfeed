@@ -558,3 +558,53 @@ test("Precision-first guards protect uncertain posts, short chart/media posts, a
   });
   assert.equal(spamEval.action, "collapse");
 });
+
+test("Undo reverts upvote, downvote, Seen 24h snooze, and Less @author cleanly", () => {
+  const engine = new CustomizationEngine();
+  let profile = createDefaultProfile();
+  let history = [] as ReturnType<CustomizationEngine["applyFeedback"]>["feedbackHistory"];
+  const now = Date.now();
+
+  const post1 = makePost({ id: "undo-1", authorHandle: "alice_dev", text: "Clean systems engineering note", hashtags: ["rust"] });
+
+  // 1. Upvote -> boosted (+3.0), trainedOnCount = 1
+  let res = engine.applyFeedback(profile, history, { post: post1, action: "upvote", sourceClient: "extension", now });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.learnedModel.trainedOnCount, 1);
+  assert.ok(engine.evaluate(post1, profile, history, now + 1000).score >= 3.0);
+
+  // 2. Click again -> Undo reverts upvote, score returns to 0, trainedOnCount returns to 0
+  res = engine.applyFeedback(profile, history, { post: post1, action: "undo", sourceClient: "extension", now: now + 2000 });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.learnedModel.trainedOnCount, 0);
+  assert.equal(engine.evaluate(post1, profile, history, now + 3000).score, 0);
+
+  // 3. Seen 24h -> creates snooze & collapses -> Undo removes snooze & restores show
+  const post2 = makePost({ id: "undo-2", authorHandle: "news_wire", text: "Breaking rocket launch scheduled tonight", hashtags: ["space"] });
+  res = engine.applyFeedback(profile, history, { post: post2, action: "seen_story", sourceClient: "extension", now: now + 4000 });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.storySnoozes.length, 1);
+  assert.equal(engine.evaluate(post2, profile, history, now + 5000).action, "collapse");
+
+  res = engine.applyFeedback(profile, history, { post: post2, action: "undo", sourceClient: "extension", now: now + 6000 });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.storySnoozes.length, 0);
+  assert.equal(engine.evaluate(post2, profile, history, now + 7000).action, "show");
+
+  // 4. Less @author -> sets -5.5 weight -> Undo restores author weight to undefined
+  const post3 = makePost({ id: "undo-3", authorHandle: "loud_acc", text: "Some take", hashtags: [] });
+  res = engine.applyFeedback(profile, history, { post: post3, action: "less_author", sourceClient: "extension", now: now + 8000 });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.authorWeights["loud_acc"], -5.5);
+
+  res = engine.applyFeedback(profile, history, { post: post3, action: "undo", sourceClient: "extension", now: now + 9000 });
+  profile = res.profile;
+  history = res.feedbackHistory;
+  assert.equal(profile.authorWeights["loud_acc"], undefined);
+  assert.equal(engine.evaluate(post3, profile, history, now + 10000).action, "show");
+});
